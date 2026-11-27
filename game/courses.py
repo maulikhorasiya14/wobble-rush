@@ -18,16 +18,28 @@ GAP = 72         # a running-jump gap: easy for players (a jump covers ~145 px),
                  # still within reach of the slower computer players (~90 px)
 
 
-def theme(sky, sea, floor_a, floor_b, side, bar="#ff5757"):
+# The look of each world (the 3D renderer builds the scenery around it):
+#   tropical - palm-tree islands floating over a turquoise sea
+#   snow     - snowy peaks, pine trees and falling snow
+#   candy    - lollipops, donuts and gumdrops on a pink sea
+#   sky      - high above the clouds, with hot-air balloons
+#   water    - out at sea among boats, buoys and sandy islands
+#   future   - a high-tech city with glowing pylons and holo rings
+#   neon     - a night-time arena of glowing colours
+ENVS = ("tropical", "snow", "candy", "sky", "water", "future", "neon")
+
+
+def theme(sky, sea, floor_a, floor_b, side, bar="#ff5757", env="tropical", **extra):
     return {"sky": sky, "sea": sea, "void": ["#2a1b5e", "#120a2e"], "floorA": floor_a,
-            "floorB": floor_b, "side": side, "bar": bar, "bar2": "#ffffff"}
+            "floorB": floor_b, "side": side, "bar": bar, "bar2": "#ffffff", "env": env, **extra}
 
 
 class Course:
     """Collects a course's pieces in distance-from-start coordinates."""
 
     KINDS = ("floors", "zones", "pads", "popups", "movers", "spinners", "sliders", "bumpers",
-             "pendulums", "pistons", "discs", "rollers", "doors", "ghosts", "tilts", "logs", "cannons")
+             "pendulums", "pistons", "discs", "rollers", "doors", "ghosts", "tilts", "logs", "cannons",
+             "hammers", "blinks", "bouncers")
 
     def __init__(self):
         self.d = 0
@@ -36,6 +48,7 @@ class Course:
         self.spawn = None
         self.finish_d = None
         self.sections: list[str] = []
+        self.kinds: list[str] = []     # which section builder made each section
         self.spans: list[tuple] = []   # (section name, start d, end d)
         self.open_gap = False   # the last section ended in a gap (no floor at c.d)
         self.wide_end = True    # the last floor spans the full width
@@ -54,9 +67,9 @@ class Course:
         """A checkpoint line at distance d; you respawn just past it."""
         self.cps.append((d, spread, x))
 
-    def waypoint(self, d, spread=200, x=MID):
-        """A route hint for computer players."""
-        self.wps.append((d, spread, x))
+    def waypoint(self, d, spread=200, x=MID, lanes=None):
+        """A route hint for computer players (``lanes``: separate lanes, each bot keeps to one)."""
+        self.wps.append((d, spread, x, lanes))
 
     def build(self, level_id, name, description, theme_, **extra) -> dict:
         L = self.d
@@ -72,8 +85,10 @@ class Course:
             "spawn": rect(*self.spawn), "finish_y": L - self.finish_d,
             "checkpoints": [{"y": L - d, "spawn_y": L - d - 20, "x": x, "spread": s}
                             for d, s, x in sorted(self.cps)],
-            "waypoints": [{"x": x, "y": L - d, "spread": s} for d, s, x in sorted(self.wps)],
+            "waypoints": [{"x": x, "y": L - d, "spread": s, **({"lanes": list(ln)} if ln else {})}
+                          for d, s, x, ln in sorted(self.wps, key=lambda w: w[0])],
             "sections": self.sections,
+            "section_kinds": self.kinds,
             # Where each section lies (y range), for the progress bar and testing.
             "section_spans": [{"name": n, "y0": L - d1, "y1": L - d0} for n, d0, d1 in self.spans],
             "bot_pace": 0.8, "bot_hesitation": 0.55, "bot_stumble": 0.25,
@@ -121,6 +136,7 @@ def section(name, needs="floor", ends="floor"):
                 landing(c)
             title = k.pop("title", name)   # a harder variant can go by its own name
             c.sections.append(title)
+            c.kinds.append(fn.__name__)
             d0 = c.d
             fn(c, *a, **k)
             c.spans.append((title, d0, c.d))
@@ -132,7 +148,7 @@ def section(name, needs="floor", ends="floor"):
 
 
 # Sections whose last floor is narrower than the full course.
-NARROW_ENDS = {"spin_bridge", "split_path", "express_bridge", "hammer_walk", "wind_path", "piston_corridor",
+NARROW_ENDS = {"spin_bridge", "beam_walk", "hammer_bridge", "split_path", "express_bridge", "hammer_walk", "wind_path", "piston_corridor",
                "cannon_alley"}
 
 
@@ -732,6 +748,145 @@ def belt_bridges(c, length=820):
     c.waypoint(c.d - 20)
 
 
+# ---- sections built on the newest obstacles: rotating hammers, disappearing
+# platforms, bumper carousels, giant bouncing balls and balance beams.
+
+@section("Hammer carousel")
+def hammer_carousel(c, length=800, speed=1.1):
+    """Hammer heads swung round on long arms: two small carousels, then a big three-headed one."""
+    c.checkpoint(c.d + 30)
+    c.floor(LEFT, c.d, WIDE, length)
+    c.point_item("hammers", c.d + 240, x=210, arm=130, heads=2, speed=speed, r=30, hub=18, phase=0.0)
+    c.point_item("hammers", c.d + 240, x=510, arm=130, heads=2, speed=-speed, r=30, hub=18, phase=0.9)
+    c.point_item("hammers", c.d + 560, x=MID, arm=190, heads=3, speed=speed * 0.75, r=32, hub=22, phase=0.4)
+    c.waypoint(c.d + 400, spread=60)
+    c.d += length
+    c.waypoint(c.d - 20)
+
+
+def _blink_rows(c, rows, cols=3, depth=140, period=3.0, duty=0.62, color="#40d9ff", width=WIDE):
+    """Rows of touching platforms over the sea that keep vanishing; at least one per row is always there."""
+    x0, w = MID - width / 2, width / cols
+    for r in range(rows):
+        for k in range(cols):
+            c.rect_item("blinks", x0 + k * w + 3, c.d + 3, w - 6, depth - 6, period=period, duty=duty,
+                        phase=((r + k) % 3) * period / 3, color=color)
+        c.waypoint(c.d + depth / 2, spread=width / 2 - 50)
+        c.d += depth
+
+
+@section("Vanishing floor", needs="wide")
+def blink_bridge(c, rows=6, color="#40d9ff"):
+    """A floor of glassy panels that flicker and vanish in turn: step onto the solid ones."""
+    c.checkpoint(c.d - 40)
+    _blink_rows(c, rows, color=color)
+    c.floor(LEFT, c.d, WIDE, 200)
+    c.d += 200
+    c.waypoint(c.d - 20)
+
+
+@section("Blink hops", needs="wide", ends="gap")
+def blink_hops(c, n=4, color="#ff4fd8"):
+    """Jump between platforms that blink out for a moment: wait for the next one to light up."""
+    c.checkpoint(c.d - 40)  # on the floor before: never respawn onto a platform that's about to vanish
+    xs = [MID, 260, 460, MID]
+    for i in range(n):
+        c.d += GAP - 6
+        w = 300
+        x = xs[i % len(xs)] - w / 2
+        c.rect_item("blinks", x, c.d, w, 220, period=4.0, duty=0.72, phase=i * 1.35, color=color)
+        c.waypoint(c.d + 110, spread=50, x=x + w / 2)
+        c.d += 220
+    c.d += GAP - 6
+
+
+@section("Bumper carousel")
+def bumper_carousel(c, length=800, speed=0.9):
+    """Rings of bumpers turning round a centre post: slip through between them."""
+    c.checkpoint(c.d + 30)
+    c.floor(LEFT, c.d, WIDE, length)
+    for x, sg in ((215, 1), (505, -1)):
+        c.point_item("bumpers", c.d + 230, x=x, r=24, power=520)   # the post in the middle
+        for k in range(3):
+            c.point_item("bumpers", c.d + 230, x=x, r=26, orbit=105, ospeed=speed * sg, ophase=k * 2.094, power=560)
+    for k in range(5):
+        c.point_item("bumpers", c.d + 560, x=MID, r=28, orbit=190, ospeed=-speed * 0.7, ophase=k * 1.2566, power=600)
+    c.point_item("bumpers", c.d + 560, x=MID, r=30, power=560)
+    c.waypoint(c.d + 400, spread=200)
+    c.d += length
+    c.waypoint(c.d - 20)
+
+
+@section("Big bouncers")
+def bouncer_field(c, n=4, length=None, color="#ff8c42", r=54):
+    """Giant balls bounce along the course: run underneath while they're up, and watch their shadows."""
+    length = length or 200 + n * 170
+    c.checkpoint(c.d + 30)
+    c.floor(LEFT, c.d, WIDE, length)
+    for i in range(n):
+        c.point_item("bouncers", c.d + 150 + i * 170, x=MID, amp=200 - (i % 2) * 40, speed=0.55 + 0.12 * i,
+                     phase=i * 1.7, r=r, hop=1.35 + 0.1 * (i % 3), hphase=i * 0.45, height=230, color=color)
+    c.d += length
+    c.waypoint(c.d - 20)
+
+
+@section("Balance beams")
+def beam_walk(c, length=720, width=80, hammers=True):
+    """Three narrow beams over the sea, with rotating hammers between them sweeping across."""
+    xs = (150, MID, 570)
+    # A short approach floor where everyone lines up with a beam before stepping on.
+    c.floor(LEFT, c.d, WIDE, 140)
+    c.checkpoint(c.d + 30)
+    c.waypoint(c.d + 60, spread=0, lanes=xs)
+    c.waypoint(c.d + 120, spread=0, lanes=xs)
+    c.d += 140
+    for x in xs:
+        c.floor(x - width / 2, c.d, width, length)
+    if hammers:
+        for i, d in enumerate((230, 500)):
+            for x in (255, 465):
+                c.point_item("hammers", c.d + d, x=x, arm=105, heads=2, speed=(0.8 + 0.12 * i) * (1 if x < MID else -1),
+                             r=24, hub=12, phase=i * 1.1 + (0 if x < MID else 0.6))
+    # Computer players pick a beam each.
+    c.waypoint(c.d + 20, spread=0, lanes=xs)
+    c.waypoint(c.d + length - 20, spread=0, lanes=xs)
+    c.d += length
+    c.floor(LEFT, c.d, WIDE, 160)   # all three beams end on one floor
+    c.d += 160
+    c.waypoint(c.d - 20)
+
+
+@section("Hammer bridge", needs="wide")
+def hammer_bridge(c, length=820, width=220):
+    """A bridge over the sea with hammers on posts either side, swinging their heads across it."""
+    c.checkpoint(c.d - 30)
+    c.floor(MID - width / 2, c.d, width, length)
+    c.waypoint(c.d + 30, spread=width / 2 - 40)
+    for i in range(3):
+        left = i % 2 == 0
+        c.point_item("hammers", c.d + 170 + i * 240, x=MID - 175 if left else MID + 175, arm=170, heads=2,
+                     speed=0.95 * (1 if left else -1), r=28, hub=14, phase=i * 1.3)
+    c.d += length
+    c.waypoint(c.d - 10, spread=width / 2 - 40)
+
+
+@section("Bumper islands", needs="ground", ends="gap")
+def bumper_islands(c, n=3):
+    """Island hops, each island with a ring of bumpers turning on it: don't get bounced into the sea!"""
+    for i in range(n):
+        c.d += GAP
+        c.floor(LEFT + 40, c.d, WIDE - 80, 260)
+        if i == 0:
+            c.checkpoint(c.d + 40, spread=180)
+        sg = 1 if i % 2 == 0 else -1
+        c.point_item("bumpers", c.d + 130, x=MID, r=22, power=500)
+        for k in range(3):
+            c.point_item("bumpers", c.d + 130, x=MID, r=24, orbit=92, ospeed=0.95 * sg, ophase=k * 2.094 + i, power=520)
+        c.waypoint(c.d + 130, spread=170)
+        c.d += 260
+    c.d += GAP
+
+
 def _fix_movers(level):
     """Lifts are stored by their centre line and slide sideways by ``amp``."""
     out = []
@@ -754,78 +909,78 @@ def make(level_id, name, description, theme_, parts, **extra):
 
 # ----------------------------------------------------------------- the races
 
-# Each race has its own signature sections; no section repeats within a race.
+# Each race is set in its own world (theme env) and has its own signature
+# sections; no section repeats within a race, and the shared basics (island
+# hops, stepping stones...) only turn up in a few races each.
 
 SPIN_SPRINT = make(
     "spin_sprint", "Spin Sprint",
-    "The spinner race: a spinner field, mystery doors, a whole forest of spinners, a "
-    "spinner bridge and rocking platforms, then a giant sweeper, shifting gates and logs.",
-    {"sky": ["#5fb4ff", "#ffe1f0"], "sea": "#ff6fb5", "void": ["#2a1b5e", "#120a2e"], "floorA": "#ffd6e8",
-     "floorB": "#ffc2dc", "side": "#c46a9a", "bar": "#ff5757", "bar2": "#ffffff"},
-    [start, spinner_field, mystery_doors, spinner_forest, spin_bridge, tilt_platforms, zigzag,
-     giant_sweeper, shifting_gates, log_hurdles, finish],
+    "Palm-tree islands over a turquoise sea: a spinner field, rotating hammers, a whole "
+    "forest of spinners, a spinner bridge and rocking platforms, then a giant sweeper and logs.",
+    theme(["#38b6ff", "#d9f6ff"], "#2fd4c8", "#fff0c2", "#ffe39a", "#e09a4a", "#ff5fa2", env="tropical"),
+    [start, spinner_field, hammer_carousel, spinner_forest, spin_bridge, tilt_platforms, zigzag,
+     giant_sweeper, mystery_doors, log_hurdles, finish],
     bot_pace=0.8, bot_hesitation=0.5, bot_stumble=0.2,
 )
 
 CONVEYOR_CANYON = make(
     "conveyor_canyon", "Conveyor Canyon",
-    "Everything moves: pick the lane that carries you forward, hop islands that are "
-    "sideways belts, choose the right belt bridge, dodge cannon fire and jump logs on a "
-    "backward treadmill.",
-    theme(["#6ec3ff", "#fff0d9"], "#ff9f43", "#ffe4c4", "#ffd3a6", "#d98a4a"),
-    [start, conveyor_lanes, belt_islands, (spinner_field, {"big": False}), conveyor_cross, cannon_alley,
-     express_bridge, belt_bridges, belt_sprint, islands, (log_hurdles, {"belt": True, "every": 1.9}),
-     split_path, finish],
+    "A high-tech factory in the sky: pick the belt that carries you forward, hop sideways-belt "
+    "islands, cross a vanishing glass floor and choose the right belt bridge.",
+    theme(["#2f6fd6", "#cfe8ff"], "#2a4a7a", "#e6eef8", "#cbd9ea", "#4a5d7a", "#ff8c42", env="future"),
+    [start, conveyor_lanes, belt_islands, conveyor_cross, (blink_bridge, {"rows": 5}), express_bridge,
+     belt_bridges, pinball_lane, belt_sprint, hammer_bridge, split_path, finish],
     bot_pace=0.78,
 )
 
 BOUNCE_BAY = make(
     "bounce_bay", "Bounce Bay",
-    "Fly across the bay on bounce pads, find the one safe path through the trust "
-    "tiles, then cross stepping stones and a crumbling bridge under cannon fire.",
-    theme(["#4fd6c8", "#f0fff9"], "#2ec4b6", "#d4fff4", "#b5f5e6", "#3aa794", "#ff5fa2"),
-    [start, pad_jump, trust_tiles, bounce_chain, stones, pinball_lane, crumble_bridge, cannon_alley,
+    "Out at sea among boats and buoys: fly across the bay on bounce pads, dodge giant bouncing "
+    "beach balls, then cross stepping stones and a crumbling bridge under cannon fire.",
+    theme(["#4fc3ff", "#eafcff"], "#1fc8e8", "#fff6d6", "#ffeab0", "#e0b066", "#ff5fa2", env="water"),
+    [start, pad_jump, bounce_chain, stones, pinball_lane, bumper_islands, crumble_bridge, cannon_alley,
      (bounce_chain, {"hops": 2, "title": "Pad sprint"}), finish],
     bot_pace=0.76,
 )
 
 FROSTY_SLOPES = make(
     "frosty_slopes", "Frosty Slopes",
-    "Everything is slippery: snowballs roll down the slopes, icy platforms rock under "
-    "your feet, frozen logs tumble toward you and the zig-zags are frozen solid.",
-    theme(["#7cc8ff", "#f4fbff"], "#7fd6ff", "#f2fbff", "#dff2ff", "#7aa9cc", "#5b8cff"),
+    "Snowy peaks and pine trees: snowballs roll down the slopes, giant snowballs bounce at "
+    "you, icy platforms rock under your feet and the zig-zags are frozen solid.",
+    theme(["#7cc8ff", "#f4fbff"], "#7fd6ff", "#f2fbff", "#dff2ff", "#7aa9cc", "#5b8cff", env="snow", snow=True),
     [start, ice_rollers, (tilt_platforms, {"ice": True}), (zigzag, {"ice": True, "n": 4}),
      (log_hurdles, {"ice": True, "speed": 150}), snow_bridge, islands, (sliders, {"ice": True}),
-     (spinner_field, {"big": False}), stones, crumble_bridge, finish],
+     (bouncer_field, {"n": 3, "title": "Snowball bounce", "color": "#e8f6ff", "r": 50}),
+     (spinner_field, {"big": False, "title": "Icicle spinners"}), crumble_bridge, finish],
     bot_pace=0.8,
 )
 
 HAMMER_HALL = make(
     "hammer_hall", "Hammer Hall",
-    "Hammers everywhere: a narrow hammer walk, islands swept by hammers, a hall of "
-    "giant ones, mystery doors and a crumbling bridge before the last gauntlet.",
-    theme(["#9f8cff", "#fbeaff"], "#b47cff", "#efe6ff", "#e0d2ff", "#8a6cc9", "#ffd23f"),
-    [start, hammer_walk, hammer_islands, big_hammers, mystery_doors, spin_bridge, crumble_bridge, islands,
-     shifting_gates, (hammer_walk, {"n": 4, "amp": 215, "title": "Hammer gauntlet"}), finish],
+    "A candy castle of hammers: a narrow hammer walk, islands swept by hammers, a hall of "
+    "giant ones, balance beams, mystery doors and the hammer gauntlet.",
+    theme(["#7f6bff", "#ffe6fb"], "#b47cff", "#efe6ff", "#e0d2ff", "#8a6cc9", "#ffd23f", env="candy"),
+    [start, hammer_walk, hammer_islands, big_hammers, mystery_doors, beam_walk, bumpers, islands,
+     hammer_bridge, shifting_gates, (hammer_walk, {"n": 4, "amp": 215, "title": "Hammer gauntlet"}), finish],
     bot_pace=0.75,
 )
 
 DRIFT_LIFTS = make(
     "drift_lifts", "Drift Lifts",
-    "Ride drifting lifts over the sea, balance on rocking platforms, cross cannon "
-    "alley, then pick the hidden path through the trust tiles.",
-    theme(["#ffc94d", "#fff8e0"], "#ffb347", "#fff4cf", "#ffe9a8", "#d9a441", "#5b8cff"),
-    [start, lift_chain, tilt_platforms, cannon_alley, bumpers,
-     (lift_chain, {"n": 3, "speed": 0.95, "w": 280, "title": "Speedy lifts"}), trust_tiles,
-     (spinner_field, {"speed": 1.9}), stones, (sliders, {"n": 2}), islands, finish],
+    "Sunset over tropical islands: ride drifting lifts, balance on rocking platforms, slip "
+    "through a bumper carousel, then find the hidden path through the trust tiles.",
+    theme(["#ff9f6b", "#ffe9c2"], "#20c9c0", "#fff4cf", "#ffe9a8", "#d9a441", "#5b8cff", env="tropical"),
+    [start, lift_chain, cannon_alley, bumper_carousel,
+     (lift_chain, {"n": 3, "speed": 0.95, "w": 280, "title": "Speedy lifts"}), trust_tiles, bumper_islands,
+     (spinner_field, {"speed": 1.9}), islands, stones, (sliders, {"n": 2}), finish],
     bot_pace=0.75,
 )
 
 GUSTY_GORGE = make(
     "gusty_gorge", "Gusty Gorge",
-    "Gusts switch on and off across a narrow path, windy islands and rocking "
-    "platforms; then a crumbling bridge in the wind and shifting gates.",
-    theme(["#7fb6ff", "#ffeaf4"], "#8fa8ff", "#e8f0ff", "#d6e3ff", "#7088c4", "#ff8c42"),
+    "High above the clouds, gusts switch on and off across a narrow path, windy islands and "
+    "rocking platforms; then a crumbling bridge in the wind and shifting gates.",
+    theme(["#3d9bff", "#e6f4ff"], "#9fd8ff", "#ffffff", "#e8f1ff", "#7fa6d9", "#ff8c42", env="sky"),
     [start, wind_path, wind_islands, (tilt_platforms, {"wind": True}), gust_gauntlet,
      (crumble_bridge, {"wind": True}), zigzag, shifting_gates, (bumpers, {"wind": True}), spin_bridge, finish],
     bot_pace=0.78,
@@ -833,23 +988,58 @@ GUSTY_GORGE = make(
 
 TURNTABLE_TRAIL = make(
     "turntable_trail", "Turntable Trail",
-    "Spinning discs carry you round; on the twister discs a bar spins the other way "
-    "on top. Mystery doors, stepping stones and a log run in between.",
-    theme(["#ff9ad5", "#fff1f8"], "#ff6fb5", "#ffe0f0", "#ffcce6", "#c4588f", "#5b8cff"),
-    [start, disc_hops, mystery_doors, twister_discs, stones, log_hurdles,
-     (disc_hops, {"n": 4, "title": "Big wheels"}), zigzag, finish],
+    "A candy land of lollipops and donuts: spinning discs carry you round, gumballs bounce "
+    "across the path and a bumper carousel turns between mystery doors.",
+    theme(["#ff9ad5", "#fff1f8"], "#ff8fd0", "#ffe0f0", "#ffcce6", "#c4588f", "#5b8cff", env="candy"),
+    [start, disc_hops, mystery_doors, twister_discs,
+     (bouncer_field, {"n": 3, "title": "Gumball bounce", "color": "#b47cff", "r": 46}), stones, popup_field,
+     (disc_hops, {"n": 4, "title": "Big wheels"}), bumper_carousel, giant_sweeper, finish],
     bot_pace=0.85,
 )
 
 PISTON_PASS = make(
     "piston_pass", "Piston Pass",
-    "Pistons punch from the walls, blocks pop out of the floor and cannons fire "
-    "across the path. Read the rhythm, and find the hidden path through the trust tiles.",
-    theme(["#5ec8ff", "#e9fbff"], "#38bdf8", "#e3f6ff", "#cdeeff", "#4a90b8", "#ff5757"),
-    [start, piston_corridor, popup_field, cannon_alley, shifting_gates, piston_plaza, trust_tiles,
-     bumpers, (piston_corridor, {"pairs": 5, "title": "Piston gauntlet"}), (sliders, {"n": 2}), split_path, finish],
+    "A futuristic test track: pistons punch from the walls, blocks pop out of the floor, "
+    "cannons fire across the path and the trust tiles hide one safe path.",
+    theme(["#1fb5ff", "#e0f7ff"], "#1d3f6e", "#e3f6ff", "#cdeeff", "#4a90b8", "#ff5757", env="future"),
+    [start, piston_corridor, popup_field, cannon_alley, shifting_gates, piston_plaza, trust_tiles, hammer_bridge,
+     (piston_corridor, {"pairs": 5, "title": "Piston gauntlet"}), (sliders, {"n": 2}), split_path, finish],
     bot_pace=0.75,
 )
 
+NEON_NEXUS = make(
+    "neon_nexus", "Neon Nexus",
+    "A glowing night arena: bumper carousels, a flickering floor, pinball bumpers, blinking "
+    "platforms, rotating hammers and a forest of spinners under a neon sunset.",
+    theme(["#140b4a", "#ff6fd8"], "#2a0f5e", "#6a55e0", "#5843c4", "#2a1b6e", "#40d9ff", env="neon"),
+    [start, bumper_carousel, (blink_bridge, {"title": "Flicker floor", "color": "#ff4fd8"}), pinball_lane,
+     (hammer_carousel, {"speed": 1.25}), (conveyor_cross, {"title": "Laser belts"}), blink_hops, popup_field,
+     bumper_islands, spinner_forest, (spin_bridge, {"title": "Laser bridge"}), finish],
+    bot_pace=0.8,
+)
+
+SKY_SPIRES = make(
+    "sky_spires", "Sky Spires",
+    "Islands floating high above the clouds: balance beams with rotating hammers, blinking "
+    "platforms, drifting lifts, bounce pads and giant bouncing balls.",
+    theme(["#2f8fff", "#cfe9ff"], "#7cc8ff", "#fff3c4", "#ffe48a", "#d9a441", "#b47cff", env="sky"),
+    [start, beam_walk, (blink_hops, {"color": "#ffd23f"}), pad_jump, (lift_chain, {"n": 3, "title": "Cloud lifts"}),
+     wind_islands, hammer_islands, (bounce_chain, {"title": "Cloud bounce"}), (big_hammers, {"n": 2}),
+     (blink_bridge, {"rows": 4, "title": "Cloud glass", "color": "#9fd8ff"}), finish],
+    bot_pace=0.8,
+)
+
+LAGOON_LEAP = make(
+    "lagoon_leap", "Lagoon Leap",
+    "A sunny lagoon: beach balls bounce along the sand, currents sweep you sideways, "
+    "hammers spin on the pier, buoys bounce you about and driftwood rolls down the jetty.",
+    theme(["#57d0ff", "#f0fdff"], "#13b5c9", "#d4fff4", "#b5f5e6", "#3aa794", "#ff8c42", env="water"),
+    [start, (bouncer_field, {"title": "Beach balls", "color": "#ffd23f"}), (belt_islands, {"title": "Currents"}),
+     hammer_carousel, (bumpers, {"title": "Buoy maze"}), conveyor_lanes,
+     (disc_hops, {"title": "Whirlpools"}), (log_hurdles, {"title": "Driftwood", "every": 1.9}),
+     (belt_sprint, {"title": "Riptide"}), express_bridge, split_path, finish],
+    bot_pace=0.78,
+)
+
 RACES = (SPIN_SPRINT, CONVEYOR_CANYON, BOUNCE_BAY, FROSTY_SLOPES, HAMMER_HALL, DRIFT_LIFTS,
-         GUSTY_GORGE, TURNTABLE_TRAIL, PISTON_PASS)
+         GUSTY_GORGE, TURNTABLE_TRAIL, PISTON_PASS, NEON_NEXUS, SKY_SPIRES, LAGOON_LEAP)

@@ -839,6 +839,13 @@ function ambientSounds(w) {
   w.pendulums.forEach((p, k) => {
     if (cameClose(`p${k}`, Math.hypot(p.bx - me.x, p.y - me.y) < p.r + 110)) sfx.swing();
   });
+  w.hammers.forEach((h, k) => {
+    const near = w.hammerHeads(h).some(([hx, hy]) => Math.hypot(hx - me.x, hy - me.y) < h.r + 110);
+    if (cameClose(`h${k}`, near)) sfx.swing();
+  });
+  w.bouncers.forEach((o, k) => {
+    if (cameClose(`o${k}`, o.bz < 20 && Math.hypot(o.bx - me.x, o.y - me.y) < 260)) sfx.piston();
+  });
   w.sliders.forEach((s, k) => {
     if (cameClose(`w${k}`, Math.abs(s.cx - me.x) < s.w / 2 + 50 && Math.abs(s.y - me.y) < 70)) sfx.slide();
   });

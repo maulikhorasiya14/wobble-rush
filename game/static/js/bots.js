@@ -103,7 +103,12 @@ function trackStuck(b, w, br, dt) {
     br.best = b.y;
     br.offset = Math.random() * 2 - 1;
     br.panicT = 0.5;
-    const a = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
+    // Wander off in a random forward-ish direction, but never straight off an edge.
+    let a = -Math.PI / 2;
+    for (let k = 0; k < 8; k++) {
+      const c = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
+      if (w.safeAt(b.x + Math.cos(c) * 40, b.y + Math.sin(c) * 40, 0.2)) { a = c; break; }
+    }
     br.dx = Math.cos(a);
     br.dy = Math.sin(a);
   }
@@ -124,7 +129,11 @@ function goalPoint(b, w, br) {
       if (best) return { x: best.x, y: best.y };
     }
     for (const wp of L.waypoints || []) {
-      if (wp.y < b.y - 30) return { x: wp.x + br.offset * wp.spread, y: wp.y };
+      if (wp.y < b.y - 30) {
+        // Several separate lanes (e.g. balance beams): each bot keeps to its own.
+        if (wp.lanes) return { x: wp.lanes[Math.min(wp.lanes.length - 1, Math.floor(((br.offset + 1) / 2) * wp.lanes.length))], y: wp.y };
+        return { x: wp.x + br.offset * wp.spread, y: wp.y };
+      }
     }
     return { x: L.bounds.w / 2, y: L.finish_y - 200 };
   }

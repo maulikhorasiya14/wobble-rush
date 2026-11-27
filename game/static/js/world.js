@@ -44,7 +44,21 @@ export class World {
     this.sliders = (level.sliders || []).map((s) => ({
       ...s, cx: s.x + s.amp * Math.sin(s.phase || 0), vx: 0,
     }));
-    this.bumpers = (level.bumpers || []).map((b) => ({ ...b, pulse: 0 }));
+    // Bumpers can orbit a centre point (a bumper carousel): `orbit` = radius, `ospeed` rad/s.
+    this.bumpers = (level.bumpers || []).map((b) => {
+      const o = { ...b, pulse: 0, ox: b.x, oy: b.y };
+      if (b.orbit) { o.x = b.x + Math.cos(b.ophase || 0) * b.orbit; o.y = b.y + Math.sin(b.ophase || 0) * b.orbit; }
+      return o;
+    });
+    // Rotating hammers: a hammer head (or two) swung round a central post.
+    this.hammers = (level.hammers || []).map((h) => ({ ...h, heads: h.heads || 1, angle: h.phase || 0, pangle: h.phase || 0 }));
+    // Disappearing platforms: on for `duty` of every `period` seconds, flicker, then gone.
+    this.blinks = (level.blinks || []).map((p) => ({ ...p }));
+    // Giant bouncing balls: bounce up and down while drifting across the course.
+    this.bouncers = (level.bouncers || []).map((o) => {
+      const s = this._bouncerAt(o, 0);
+      return { ...o, bx: s.x, pbx: s.x, bz: s.z, pbz: s.z, vx: 0 };
+    });
     // Newer obstacle types (see levels.py): belts/ice/wind zones, bounce pads,
     // swinging hammers, rolling balls and moving platforms.
     this.zones = (level.zones || []).map((z) => ({
@@ -172,7 +186,45 @@ export class World {
     for (const t of this.tilts) {
       if (x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return true;
     }
+    for (const p of this.blinks) {
+      if (x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h && this.blinkOn(p, this.time + ahead)) return true;
+    }
     return false;
+  }
+
+  /** Is a disappearing platform there at time t? */
+  blinkOn(p, t) {
+    if (this.status === "countdown") return true;
+    const u = ((((t + (p.phase || 0)) % p.period) + p.period) % p.period);
+    return u < p.period * p.duty;
+  }
+
+  /** 0..1: how close a disappearing platform is to vanishing (1 = about to go), or -1 while it's gone. */
+  blinkWarn(p, t) {
+    if (this.status === "countdown") return 0;
+    const u = ((((t + (p.phase || 0)) % p.period) + p.period) % p.period);
+    const on = p.period * p.duty;
+    if (u >= on) return -1;
+    const warn = p.warn ?? 0.8;
+    return u > on - warn ? (u - (on - warn)) / warn : 0;
+  }
+
+  /** Where a rotating hammer's heads are for a given arm angle: [[x, y, vx, vy], ...]. */
+  hammerHeads(h, angle = h.angle) {
+    const out = [];
+    const v = h.speed * h.arm;
+    for (let k = 0; k < h.heads; k++) {
+      const a = angle + (k * TAU) / h.heads, c = Math.cos(a), s = Math.sin(a);
+      out.push([h.x + c * h.arm, h.y + s * h.arm, -s * v, c * v]);
+    }
+    return out;
+  }
+
+  /** A bouncing ball's sideways position and height (of its lowest point) at time t. */
+  _bouncerAt(o, t) {
+    const x = o.x + (o.amp || 0) * Math.sin(t * (o.speed || 0) + (o.phase || 0));
+    const u = (((t + (o.hphase || 0)) / o.hop) % 1 + 1) % 1;
+    return { x, z: o.height * 4 * u * (1 - u) };   // a parabola: up, then back down hard
   }
 
   ghostAt(x, y) {
@@ -252,6 +304,19 @@ export class World {
     for (const r of this.rollers) {
       const dx = x - (r.x + r.vx * ahead), dy = y - (r.y + r.vy * ahead), rr = r.r + R + 10;
       if (dx * dx + dy * dy < rr * rr) return true;
+    }
+    for (const h of this.hammers) {
+      for (const [hx, hy] of this.hammerHeads(h, h.angle + h.speed * ahead)) {
+        const dx = x - hx, dy = y - hy, rr = h.r + R + 10;
+        if (dx * dx + dy * dy < rr * rr) return true;
+      }
+      const dx = x - h.x, dy = y - h.y, rr = (h.hub || 16) + R;
+      if (dx * dx + dy * dy < rr * rr) return true;
+    }
+    for (const o of this.bouncers) {
+      const s = this._bouncerAt(o, this.time + ahead);
+      const dx = x - s.x, dy = y - o.y, rr = o.r + R + 8;
+      if (s.z < 50 && dx * dx + dy * dy < rr * rr) return true;
     }
     for (const p of this.pistons) {
       const cx = this._pistonX(p, this.time + ahead);
@@ -350,7 +415,24 @@ export class World {
       w.vx = (nx - w.cx) / dt;
       w.cx = nx;
     }
-    for (const b of this.bumpers) b.pulse = Math.max(0, b.pulse - dt * 3);
+    for (const b of this.bumpers) {
+      b.pulse = Math.max(0, b.pulse - dt * 3);
+      if (b.orbit) {
+        const a = (b.ophase || 0) + this.time * b.ospeed;
+        b.x = b.ox + Math.cos(a) * b.orbit;
+        b.y = b.oy + Math.sin(a) * b.orbit;
+      }
+    }
+    for (const h of this.hammers) {
+      h.pangle = h.angle;
+      h.angle = (h.phase || 0) + this.time * h.speed;
+    }
+    for (const o of this.bouncers) {
+      const s = this._bouncerAt(o, this.time);
+      o.pbx = o.bx; o.pbz = o.bz;
+      o.vx = (s.x - o.bx) / dt;
+      o.bx = s.x; o.bz = s.z;
+    }
     for (const p of this.pads) p.pulse = Math.max(0, p.pulse - dt * 3);
 
     // Moving platforms carry whoever is standing on them.
@@ -672,6 +754,14 @@ export class World {
       for (const w of this.sliders) this._hitSlider(b, w, R);
       for (const p of this.pendulums) this._hitBall(b, p.bx, p.y, p.r, p.vx, 0);
       for (const r of this.rollers) this._hitBall(b, r.x, r.y, r.r, r.vx, r.vy, r.push ?? 1);
+      for (const h of this.hammers) {
+        this._hitPost(b, h.x, h.y, (h.hub || 16) + R);
+        if (b.z < 70) for (const [hx, hy, vx, vy] of this.hammerHeads(h)) this._hitBall(b, hx, hy, h.r, vx * 0.6, vy * 0.6, 1.15);
+      }
+      for (const o of this.bouncers) {
+        // You can run underneath while it's up in the air; when it comes down it flattens you.
+        if (o.bz < 40 && b.z < o.bz + o.r) this._hitBall(b, o.bx, o.y, o.r * 0.92, o.vx, 0, 1.35);
+      }
       for (const p of this.pistons) this._hitSlider(b, p, R);
       for (const p of this.popups) {
         if (p.rise > 0.5) this._hitSlider(b, { cx: p.x + p.w / 2, y: p.y + p.h / 2, w: p.w, h: p.h, vx: 0 }, R);
@@ -691,6 +781,17 @@ export class World {
         }
       }
     }
+  }
+
+  /** A fixed round post: slide around it. */
+  _hitPost(b, x, y, rr) {
+    const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy);
+    if (d >= rr) return;
+    const nx = d > 1e-4 ? dx / d : 1, ny = d > 1e-4 ? dy / d : 0;
+    b.x = x + nx * rr;
+    b.y = y + ny * rr;
+    const vn = b.vx * nx + b.vy * ny;
+    if (vn < 0) { b.vx -= vn * nx; b.vy -= vn * ny; }
   }
 
   /** Swinging hammers and rolling balls: round, tall, and they knock you flying. */

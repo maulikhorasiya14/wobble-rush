@@ -67,7 +67,7 @@ PRACTICE = {
     "bounds": {"w": 720, "h": 2600},
     "theme": {"sky": ["#58c7ff", "#e8fbff"], "sea": "#3fc6ff",
               "void": ["#123a5e", "#071a2e"], "floorA": "#d6f5ff", "floorB": "#c2ecff",
-              "side": "#5a9ec4", "bar": "#ff8c42", "bar2": "#ffffff"},
+              "side": "#5a9ec4", "bar": "#ff8c42", "bar2": "#ffffff", "env": "sky"},
     "floors": [
         rect(160, 2200, 400, 400),
         rect(160, 1800, 400, 320),   # 80 px gap before this: a normal jump clears it
@@ -115,7 +115,7 @@ TILE_PANIC = {
     "bounds": {"w": 1560, "h": 1480},
     "theme": {"sky": ["#6fd0ff", "#f4ffe8"], "sea": "#7be06a",
               "void": ["#1b3a2e", "#07140f"], "floorA": "#b8f5d0", "floorB": "#9be8bd",
-              "side": "#3f9a6a", "crack": "#ffb347", "bar": "#ff5757", "bar2": "#ffffff"},
+              "side": "#3f9a6a", "crack": "#ffb347", "bar": "#ff5757", "bar2": "#ffffff", "env": "tropical"},
     # Hexagonal tiles (pointy-top, offset rows) trimmed to a round arena.
     # Same 172-tile layout as before, with every tile twice as big.
     "tiles": {"shape": "hex", "x": 0, "y": 0, "cols": 15, "rows": 17, "pitch": 100, "size": 94,
@@ -142,7 +142,7 @@ SPIN_ARENA = {
     "bounds": {"w": 800, "h": 800},
     "theme": {"sky": ["#ff9a6b", "#ffe7b0"], "sea": "#b46bff",
               "void": ["#3a1b1b", "#140707"], "floorA": "#ffe8b8", "floorB": "#ffd98a",
-              "side": "#c48a3f", "bar": "#5b8cff", "bar2": "#ffffff"},
+              "side": "#c48a3f", "bar": "#5b8cff", "bar2": "#ffffff", "env": "candy"},
     "arena": {"x": 400, "y": 400, "r": 330, "min_r": 140, "shrink_after": 30, "shrink_rate": 5},
     "spinners": [
         {"x": 400, "y": 400, "arm": 336, "arms": 2, "speed": 0.9, "ramp": 0.035,
@@ -172,7 +172,7 @@ METEOR_MEADOW = {
     "bounds": {"w": 810, "h": 810},
     "theme": {"sky": ["#ffb36b", "#fff1d6"], "sea": "#5eead4", "void": ["#1b3a2e", "#07140f"],
               "floorA": "#d9f99d", "floorB": "#bef264", "side": "#65a30d", "crack": "#ff5757",
-              "bar": "#ff5757", "bar2": "#ffffff"},
+              "bar": "#ff5757", "bar2": "#ffffff", "env": "tropical"},
     "tiles": {"x": 0, "y": 0, "cols": 9, "rows": 9, "pitch": 90, "size": 84,
               "touch_crumble": False, "crack_time": 1.8, "auto_crack_after": 9999, "auto_crack_every": 1,
               "meteors": {"start": 3.0, "every": 2.4, "every_min": 0.8, "ramp": 0.025,
@@ -191,7 +191,7 @@ BLIZZARD_BLUFF = {
     "camera": "fit",
     "bounds": {"w": 800, "h": 800},
     # A pale winter sky (not a dark void) with snow blowing on the gusts.
-    "theme": {"sky": ["#9cc9ff", "#f4fbff"], "sea": "#7fd6ff", "void": ["#e4f1ff", "#a8c7ea"], "snow": True,
+    "theme": {"sky": ["#9cc9ff", "#f4fbff"], "sea": "#7fd6ff", "void": ["#e4f1ff", "#a8c7ea"], "snow": True, "env": "snow",
               "floorA": "#f2fbff", "floorB": "#dff2ff", "side": "#7aa9cc", "bar": "#5b8cff", "bar2": "#ffffff"},
     "arena": {"x": 400, "y": 400, "r": 340, "min_r": 200, "shrink_after": 40, "shrink_rate": 2.5},
     "zones": [{"type": "gust", **rect(0, 0, 800, 800), "base": 70, "ramp": 2.0, "max": 190,
@@ -209,8 +209,9 @@ CANNON_CLASH = {
     "goal": "Be the last one standing to win the crown!",
     "camera": "fit",
     "bounds": {"w": 800, "h": 800},
-    "theme": {"sky": ["#ff8f6b", "#ffe3c4"], "sea": "#ff6b6b", "void": ["#3a1b1b", "#140707"],
-              "floorA": "#fff1c4", "floorB": "#ffe08a", "side": "#c48a3f", "bar": "#5b8cff", "bar2": "#ffffff"},
+    "theme": {"sky": ["#ff8f6b", "#ffe3c4"], "sea": "#1fb5d9", "void": ["#3a1b1b", "#140707"],
+              "floorA": "#fff1c4", "floorB": "#ffe08a", "side": "#c48a3f", "bar": "#5b8cff", "bar2": "#ffffff",
+              "env": "water"},
     "arena": {"x": 400, "y": 400, "r": 330, "min_r": 150, "shrink_after": 35, "shrink_rate": 4},
     "cannons": [
         {"angle": a, "dist": 390, "every": 4.8, "speed": 250, "r": 30, "spread": 160, "phase": 2.0 + i * 0.8,
@@ -229,8 +230,9 @@ PINBALL_PIT = {
     "goal": "Be the last one standing to win the crown!",
     "camera": "fit",
     "bounds": {"w": 800, "h": 800},
-    "theme": {"sky": ["#8f7bff", "#ffe6fb"], "sea": "#b46bff", "void": ["#25163f", "#0d0618"],
-              "floorA": "#e9e2ff", "floorB": "#d6c9ff", "side": "#7a5cc4", "bar": "#ff5fa2", "bar2": "#ffffff"},
+    "theme": {"sky": ["#140b4a", "#ff6fd8"], "sea": "#2a0f5e", "void": ["#25163f", "#0d0618"],
+              "floorA": "#8f7bff", "floorB": "#7a64f0", "side": "#2a1b6e", "bar": "#40d9ff", "bar2": "#ffffff",
+              "env": "neon"},
     "arena": {"x": 400, "y": 400, "r": 330, "min_r": 160, "shrink_after": 30, "shrink_rate": 4},
     "spinners": [
         {"x": 290, "y": 400, "arm": 110, "arms": 2, "speed": 1.2, "ramp": 0.02, "max_speed": 3.0, "thick": 16, "hub": 20},
@@ -240,7 +242,7 @@ PINBALL_PIT = {
                 for x, y in ((400, 230), (400, 570), (230, 240), (570, 240), (230, 560), (570, 560))],
 }
 
-# The nine races are built section by section in courses.py.
+# The twelve races are built section by section in courses.py.
 LEVELS = {lvl["id"]: lvl for lvl in (*RACES, PRACTICE, TILE_PANIC, SPIN_ARENA,
                                      METEOR_MEADOW, BLIZZARD_BLUFF, CANNON_CLASH, PINBALL_PIT)}
 
@@ -256,6 +258,9 @@ SLOTS = {
     "hammer_hall": ["opener", "middle"],
     "turntable_trail": ["middle"],  # too punishing as a first round
     "piston_pass": ["opener", "middle"],
+    "lagoon_leap": ["opener", "middle"],
+    "neon_nexus": ["middle"],
+    "sky_spires": ["middle"],
     "frosty_slopes": ["middle"],
     "drift_lifts": ["middle"],
     "gusty_gorge": ["middle"],

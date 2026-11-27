@@ -18,7 +18,9 @@ export const STATE_EVERY = 1 / 20;
 const DYNAMIC = {
   spinners: ["angle", "arms", "arm", "omega"],
   sliders: ["cx", "vx"],
-  bumpers: ["pulse"],
+  bumpers: ["pulse", "x", "y"],
+  hammers: ["angle"],
+  bouncers: ["bx", "bz", "vx"],
   zones: ["active", "angle", "fx", "fy"],
   pads: ["pulse"],
   pendulums: ["bx", "vx"],
@@ -37,8 +39,9 @@ const FLAGS = new Set(["active", "up", "broken", "known"]);
 // Fields the renderers interpolate from ("previous" copies): we set them equal
 // to the current value, because the Mirror already blends between snapshots.
 const PREVIOUS = {
-  spinners: ["angle", "pangle"], sliders: ["cx", "pcx"], pendulums: ["bx", "pbx"],
-  movers: ["cx", "pcx"], discs: ["angle", "pangle"], pistons: ["cx", "pcx"],
+  spinners: [["angle", "pangle"]], sliders: [["cx", "pcx"]], pendulums: [["bx", "pbx"]],
+  movers: [["cx", "pcx"]], discs: [["angle", "pangle"]], pistons: [["cx", "pcx"]],
+  hammers: [["angle", "pangle"]], bouncers: [["bx", "pbx"], ["bz", "pbz"]],
 };
 
 const BODY_NUM = ["x", "y", "z", "vx", "vy", "vz", "fx", "fy", "stun", "walk", "squash", "hitT", "fallT", "lives", "finishTime"];
@@ -265,7 +268,7 @@ export class Mirror {
           else if (f === "aim") it[f] = lerpAngle(a[k], c[k], u);
           else it[f] = lerp(a[k], c[k], u);
         });
-        if (prev) it[prev[1]] = it[prev[0]];
+        if (prev) for (const [cur, old_] of prev) it[old_] = it[cur];
         // Moving platforms and spinning discs carry our own character along.
         if (own && old !== null && own.z <= 0 && !own.falling && !own.eliminated) this._carry(key, it, old, own);
       });

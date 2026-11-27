@@ -52,6 +52,9 @@ def standable(level):
         for d in level.get("discs", [])
     ] + [
         {"x": t["x"], "y": t["y"], "w": t["w"], "h": t["h"]} for t in level.get("tilts", [])
+    ] + [
+        # Disappearing platforms come back every few seconds.
+        {"x": p["x"], "y": p["y"], "w": p["w"], "h": p["h"]} for p in level.get("blinks", [])
     ] + ghost_tiles(level)
 
 
@@ -170,15 +173,49 @@ def test_tutorial_has_a_dive_gap_and_tips():
 
 
 def test_races_each_have_their_own_character():
-    """Section types are spread out: none appears in more than four of the nine races,
-    and every race has at least two sections no more than one other race has."""
+    """Section types are spread out: none appears in more than three races (even
+    under another name), and every race has at least two sections no more than
+    one other race has."""
     from collections import Counter
     races = [lvl for lvl in race_levels() if lvl["id"] != "practice"]
-    use = Counter(n for lvl in races for n in set(lvl["sections"]) if n not in ("Start", "Finish"))
-    assert max(use.values()) <= 4, use.most_common(3)
+    use = Counter(n for lvl in races for n in set(lvl["section_kinds"]) if n not in ("start", "finish"))
+    assert max(use.values()) <= 3, use.most_common(3)
     for lvl in races:
-        rare = [n for n in set(lvl["sections"]) if use.get(n, 99) <= 2]
+        rare = [n for n in set(lvl["section_kinds"]) if use.get(n, 99) <= 2]
         assert len(rare) >= 2, (lvl["id"], rare)
+
+
+def test_every_level_has_a_world():
+    """Each level is set in one of the themed worlds, and the races cover all of them."""
+    from game.courses import ENVS
+    for lvl in LEVELS.values():
+        assert lvl["theme"].get("env") in ENVS, lvl["id"]
+    races = [lvl for lvl in race_levels() if lvl["id"] != "practice"]
+    assert {lvl["theme"]["env"] for lvl in races} == set(ENVS)
+    from collections import Counter
+    assert max(Counter(lvl["theme"]["env"] for lvl in races).values()) <= 2
+
+
+def test_new_obstacles_are_used():
+    races = [lvl for lvl in race_levels() if lvl["id"] != "practice"]
+    for kind in ("hammers", "blinks", "bouncers"):
+        assert sum(bool(lvl.get(kind)) for lvl in races) >= 3, kind
+    assert sum(any(b.get("orbit") for b in lvl.get("bumpers", [])) for lvl in races) >= 3
+
+
+@pytest.mark.parametrize("level", race_levels(), ids=lambda l: l["id"])
+def test_vanishing_platforms_always_leave_a_way_across(level):
+    """In every row of disappearing platforms, at least one is there at any moment."""
+    rows = {}
+    for p in level.get("blinks", []):
+        rows.setdefault(p["y"], []).append(p)
+    for row in rows.values():
+        if len(row) < 2:
+            continue   # a lone blinking hop: you wait for it
+        for step in range(300):
+            t = step * 0.01 * row[0]["period"]
+            on = [((t + p["phase"]) % p["period"]) < p["period"] * p["duty"] for p in row]
+            assert any(on), (level["id"], t)
 
 
 def test_waypoints_ordered_toward_finish():

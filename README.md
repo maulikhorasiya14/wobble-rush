@@ -75,16 +75,22 @@ would drop everyone in a room; while editing the game, start it with
 
 ## Features
 
-- Pick a **3, 4 or 5-round** show; rounds are drawn at random from 15 rounds, each
+- Pick a **3, 4 or 5-round** show; rounds are drawn at random from 18 rounds, each
   tagged with where it can appear (opener, middle, final)
-- 9 long races (9,000–10,500 px, 9–13 sections each, from a library of 40 section
-  types in `game/courses.py`; every race has its own signature sections, none repeats
-  within a race, and the finish stays hidden in the distance until you get close).
-  Obstacles include mystery doors, hidden-path trust tiles, crumbling bridges, tilting
-  platforms, rolling logs, cannon alleys and shifting gates, with door and tile layouts
-  reshuffled every round (the same for everyone in multiplayer): Spin Sprint, Conveyor
-  Canyon, Bounce Bay, Frosty Slopes, Hammer Hall,
-  Drift Lifts, Gusty Gorge, Turntable Trail, Piston Pass
+- 7 themed worlds, each with its own 3D scenery: tropical islands, snowy peaks,
+  candy land, high above the clouds, out at sea, a futuristic city and a neon arena
+  (floors sit on floating islands or glowing frames; mountains, skylines and neon
+  hills on the horizon)
+- 12 long races (9,000–10,500 px, 10–12 sections each, from a library of 48 section
+  types in `game/courses.py`; every race has its own signature sections, no section
+  type appears in more than three races, and the finish stays hidden in the distance
+  until you get close). Obstacles include rotating hammers, vanishing platforms, bumper
+  carousels, giant bouncing balls, balance beams, mystery doors, hidden-path trust tiles,
+  crumbling bridges, tilting platforms, rolling logs, cannon alleys and shifting gates,
+  with door and tile layouts reshuffled every round (the same for everyone in
+  multiplayer): Spin Sprint, Conveyor Canyon, Bounce Bay, Frosty Slopes, Hammer Hall,
+  Drift Lifts, Gusty Gorge, Turntable Trail, Piston Pass, Neon Nexus, Sky Spires,
+  Lagoon Leap
 - 3 survival rounds: Tile Panic, Meteor Meadow, Blizzard Bluff
 - 3 finals: Spin Arena, Cannon Clash, Pinball Pit
 - 11 AI rivals with different skill levels
@@ -130,7 +136,7 @@ wobble-rush/
 ├── game/
 │   ├── __init__.py          # Flask app factory
 │   ├── levels.py            # Levels, physics, show format, palette
-│   ├── courses.py           # The nine race courses, built from sections
+│   ├── courses.py           # The twelve race courses, built from sections
 │   ├── rules.py             # Result validation, scoring, personal bests
 │   ├── storage.py           # JSON save file load/save/reset
 │   ├── routes.py            # Page + JSON API
@@ -147,6 +153,7 @@ wobble-rush/
 │           ├── world.js     # Physics, obstacles, round rules
 │           ├── bots.js      # AI rivals
 │           ├── render3d.js  # 3D renderer: scene, characters, animation, camera
+│           ├── scenery.js   # 3D surroundings for each themed world
 │           ├── render.js    # Classic 2D renderer (fallback) + progress bar
 │           ├── input.js     # Keyboard input
 │           ├── sfx.js       # Sound effects and mixing (Web Audio)

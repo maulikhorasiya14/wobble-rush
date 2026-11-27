@@ -71,8 +71,8 @@ can appear in:
 
 | Slot | Rounds |
 |------|--------|
-| **Round 1** (opener) | Spin Sprint, Conveyor Canyon, Bounce Bay, Hammer Hall, Piston Pass |
-| **Middle rounds** | Any opener race, plus Turntable Trail, Frosty Slopes, Drift Lifts, Gusty Gorge, and the survival rounds Tile Panic, Meteor Meadow and Blizzard Bluff (at most one survival round, two in a 5-round show) |
+| **Round 1** (opener) | Spin Sprint, Conveyor Canyon, Bounce Bay, Hammer Hall, Piston Pass, Lagoon Leap |
+| **Middle rounds** | Any opener race, plus Turntable Trail, Frosty Slopes, Drift Lifts, Gusty Gorge, Neon Nexus, Sky Spires, and the survival rounds Tile Panic, Meteor Meadow and Blizzard Bluff (at most one survival round, two in a 5-round show) |
 | **Final** | Spin Arena, Cannon Clash or Pinball Pit, picked at random |
 
 No round repeats within a show.
@@ -182,29 +182,50 @@ Sections you'll meet:
 | Shifting gates | Walls with one gap that slides side to side: run through when it lines up. |
 | Spinner forest / Giant sweeper | A grid of small spinners, or one huge bar sweeping the whole width. |
 | Hammer hops / Belt islands / Twister discs | Island hops with a hammer, a sideways belt, or a spinner riding a turntable. |
+| Hammer carousel / Hammer bridge | Hammer heads swung round on long arms from a central post. Watch the head coming round and slip past behind it. |
+| Vanishing floor / Blink hops | Glassy platforms that flicker, then vanish for a moment and come back. When one starts flashing, step onto a steady one. |
+| Bumper carousel / Bumper islands | Rings of bumpers turning round a post: wait for a gap, then go. On the islands they can bounce you into the sea! |
+| Big bouncers | Giant balls bounce along the course. Their shadow on the floor grows as they come down: run underneath while they're high. |
+| Balance beams | Three narrow beams over the sea with rotating hammers between them. Pick a beam, stay in the middle of it, and time the hammers. |
 
-### The nine races
+### The twelve races
 
-Each race has its own theme and signature sections:
+Every race is set in its own world, with its own scenery and signature sections:
 
-- **Spin Sprint**: the classic mix: spinners, islands, sliding walls, bumpers, a
-  spinner bridge, zig-zags, stepping stones and a split path.
-- **Conveyor Canyon**: conveyor belts. Pick the lane whose arrows point toward the
-  finish, push against the sideways belts, then ride the express belt along the bridge.
-- **Bounce Bay**: gaps far too wide to jump. Run onto a glowing **bounce pad** and it
-  throws you across. You can't steer mid-flight, so line up first.
-- **Frosty Slopes**: **ice** makes you slide (it's hard to stop or turn), and giant
-  **snowballs** roll down toward you. Dodge them or get bowled over.
-- **Hammer Hall**: big **hammers** swing across a narrow walkway. Wait for a hammer
-  to pass, then run.
-- **Drift Lifts**: **moving platforms** over the sea. Wait at the edge until the next
-  platform slides in front of you, then jump. You ride along while standing on one.
-- **Gusty Gorge**: **gusts of wind** switch on and off (the fans spin fast and white
-  streaks blow past). Lean into the wind or wait for it to stop.
-- **Turntable Trail**: a chain of **spinning discs**. Standing on one carries you
-  round, so aim ahead of where you want to go and jump when the next disc is close.
-- **Piston Pass**: **pistons** punch out of the corridor walls, and orange blocks pop
-  up out of the floor. Watch the rhythm and slip through the gaps.
+| World | Looks like |
+|-------|------------|
+| Tropical | Palm-tree islands floating over a turquoise sea, green mountains |
+| Snow | Snowy peaks, floating ice islands with pine trees, falling snow |
+| Candy | Lollipops, donuts and gumdrops, pink and purple seas |
+| Sky | High above the clouds, with hot-air balloons and floating islands |
+| Water | Out at sea among sailing boats, buoys and sandy islands |
+| Future | A high-tech city skyline, glowing pylons and holo rings |
+| Neon | A night arena with glowing pillars, wireframe hills and a neon sunset |
+
+- **Spin Sprint** (tropical): spinners of every kind, rotating hammers, a spinner
+  bridge, rocking platforms, a giant sweeper and rolling logs.
+- **Conveyor Canyon** (future): conveyor belts. Pick the lane whose arrows point
+  toward the finish, cross a **vanishing glass floor**, then pick the right belt bridge.
+- **Bounce Bay** (water): gaps far too wide to jump. Run onto a glowing **bounce pad**
+  and it throws you across. You can't steer mid-flight, so line up first.
+- **Frosty Slopes** (snow): **ice** makes you slide, snowballs roll down at you and
+  **giant snowballs** bounce along the course.
+- **Hammer Hall** (candy): hammers everywhere, plus **balance beams** and a hammer
+  bridge. Wait for a hammer to pass, then run.
+- **Drift Lifts** (tropical sunset): **moving platforms** over the sea. Wait at the
+  edge until the next one slides in front of you, then jump.
+- **Gusty Gorge** (sky): **gusts of wind** switch on and off. Lean into the wind or
+  wait for it to stop.
+- **Turntable Trail** (candy): **spinning discs** carry you round, gumballs bounce
+  across and a **bumper carousel** turns between mystery doors.
+- **Piston Pass** (future): **pistons** punch out of the walls and blocks pop up out
+  of the floor. Watch the rhythm and slip through the gaps.
+- **Neon Nexus** (neon): bumper carousels, a flickering floor, blinking platforms,
+  rotating hammers and spinners under a neon sunset.
+- **Sky Spires** (sky): balance beams, blinking platforms, cloud lifts, bounce pads
+  and giant hammers high above the clouds.
+- **Lagoon Leap** (water): bouncing beach balls, sideways currents, a hammer
+  carousel, a buoy maze and driftwood rolling down the jetty.
 
 ### More survival rounds
 
@@ -272,6 +293,11 @@ A round platform with one huge beam sweeping around it.
 | Pop-up block        | Orange striped block rising from a dark slot | Go through a lane while it's down          |
 | Meteor target       | Red pulsing ring, red tiles                  | Get off the red tiles, fast                |
 | Cannon              | Navy cannon on the arena's edge              | Watch where it aims; dodge the ball        |
+| Rotating hammer     | Striped drum on an arm turning round a post  | Slip past just after a head goes by        |
+| Vanishing platform  | Glassy coloured panel; flashes before it goes | Get off when it flashes; it comes back     |
+| Bumper carousel     | Bumpers circling a centre bumper             | Wait for a gap in the ring                 |
+| Giant bouncing ball | Huge striped ball with a shadow below it     | Run under it while the shadow is small     |
+| Balance beam        | Narrow plank over the sea                    | Stay in the middle; watch for hammers      |
 | Finish line         | Checkered strip under a yellow FINISH arch  | Cross it!                                    |
 
 When you're stunned (little stars spin around your head), you can't move for a moment.

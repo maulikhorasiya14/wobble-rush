@@ -118,6 +118,29 @@ export class Renderer {
     for (const b of world.bumpers) items.push({ y: b.y, f: () => this._drawBumper(b) });
     for (const p of world.pendulums) items.push({ y: p.y, f: () => this._drawBall(p.bx, p.y, p.r, "#ff5fa2", p.x) });
     for (const r of world.rollers) items.push({ y: r.y, f: () => this._drawBall(r.x, r.y, r.r, "#f4fbff") });
+    for (const h of world.hammers) {
+      items.push({ y: h.y, f: () => {
+        const ctx = this.ctx;
+        ctx.fillStyle = "#6c5fa0";
+        ctx.beginPath(); ctx.arc(h.x, h.y - 10, h.hub || 16, 0, TAU); ctx.fill();
+        for (const [hx, hy] of world.hammerHeads(h)) {
+          ctx.strokeStyle = "#6c5fa0"; ctx.lineWidth = 8;
+          ctx.beginPath(); ctx.moveTo(h.x, h.y - 60); ctx.lineTo(hx, hy - 60); ctx.stroke();
+          this._drawBall(hx, hy, h.r, "#ffd23f");
+        }
+      } });
+    }
+    for (const o of world.bouncers) {
+      items.push({ y: o.y, f: () => {
+        const ctx = this.ctx, k = Math.max(0.3, 1 - o.bz / 260);
+        ctx.fillStyle = `rgba(0,0,0,${0.15 + 0.25 * k})`;
+        ctx.beginPath(); ctx.ellipse(o.bx, o.y + 4, o.r * k, o.r * 0.5 * k, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = o.color || "#ff8c42";
+        ctx.beginPath(); ctx.arc(o.bx, o.y - o.r * 0.6 - o.bz * 0.6, o.r, 0, TAU); ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(o.bx, o.y - o.r * 0.6 - o.bz * 0.6, o.r * 0.65, -2.4, -0.8); ctx.stroke();
+      } });
+    }
     for (const d of world.doors) if (!d.broken) items.push({ y: d.y + d.h, f: () => this._drawDoor(d) });
     for (const lg of world.logs) items.push({ y: lg.y, f: () => this._drawLog(lg) });
     for (const b of world.bodies) {
@@ -354,6 +377,24 @@ export class Renderer {
         ctx.arc(d.x, d.y, d.r, d.angle + (i / 12) * TAU, d.angle + ((i + 1) / 12) * TAU);
         ctx.fill();
       }
+    }
+    for (const p of world.blinks) {
+      const warn = world.blinkWarn(p, world.time);
+      if (warn < 0) {
+        ctx.strokeStyle = "rgba(64,217,255,0.35)";
+        ctx.setLineDash([8, 8]);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p.x + 4, p.y + 4, p.w - 8, p.h - 8);
+        ctx.setLineDash([]);
+        continue;
+      }
+      const flick = warn > 0 && Math.sin(world.clock * (20 + warn * 30)) > 0;
+      ctx.fillStyle = flick ? "rgba(255,255,255,0.55)" : (p.color || "#40d9ff");
+      roundRect(ctx, p.x + 2, p.y + 2, p.w - 4, p.h - 4, 10);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.8)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
     }
     for (const p of world.popups) {
       ctx.fillStyle = p.rise > 0.5 ? "#ff8c42" : "rgba(42,27,94,0.3)";

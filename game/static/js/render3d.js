@@ -5,6 +5,7 @@
 // Three.js space: X = x * S, Y = z * S (up), Z = y * S.  The course runs toward -Z.
 import * as THREE from "../vendor/three/three.module.min.js";
 import { drawProgressBar } from "./render.js";
+import { buildScenery, envOf } from "./scenery.js";
 
 const S = 1 / 20;          // world pixels -> scene units
 const TAU = Math.PI * 2;
@@ -833,6 +834,9 @@ export class Renderer3D {
     this.ghostViews = [];
     this.tiltViews = [];
     this.logViews = [];
+    this.hammerViews = [];
+    this.blinkViews = [];
+    this.bouncerViews = [];
     this.doorMats = null;
 
     const sky = this._own(makeSky(th));
@@ -844,9 +848,11 @@ export class Renderer3D {
     scene.fog = new THREE.Fog(new THREE.Color(th.sky[1]), race ? 70 : 90, race ? 330 : 420);
     scene.environment = this._envFor(th);
 
-    const hemi = new THREE.HemisphereLight(new THREE.Color(th.sky[0]).lerp(new THREE.Color(0xffffff), 0.5), new THREE.Color(th.sea), 0.65);
+    const env = envOf(th);
+    this.env = env;
+    const hemi = new THREE.HemisphereLight(new THREE.Color(th.sky[0]).lerp(new THREE.Color(0xffffff), 0.5), new THREE.Color(th.sea), env.hemi);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+    const sun = new THREE.DirectionalLight(env.sunColor, env.sun);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536);
     const sc = sun.shadow.camera;
@@ -875,8 +881,7 @@ export class Renderer3D {
 
     const W = L.bounds.w * S, H = L.bounds.h * S;
     this.center = new THREE.Vector3(W / 2, 0, H / 2);
-    this._buildClouds(scene, W, H);
-    this._buildDecor(scene, W, H, th);
+    this.scenery = buildScenery(scene, L, (o) => this._own(o), SEA_Y);
 
     this.static = new THREE.Group();
     scene.add(this.static);
@@ -898,6 +903,10 @@ export class Renderer3D {
     this.doorViews = world.doors.map((d) => this._buildDoor(d));
     this.ghostViews = world.ghosts.map((g) => this._buildGhost(g, th));
     this.tiltViews = world.tilts.map((t) => this._buildTilt(t, th));
+    this.hammerViews = world.hammers.map((h) => this._buildHammer(h, th));
+    this.blinkViews = world.blinks.map((p) => this._buildBlink(p, th));
+    this.bouncerViews = world.bouncers.map((o) => this._buildBouncer(o));
+    this._buildOrbitTracks(world);
 
     this.chars = new Map();
     for (const b of world.bodies) {
@@ -926,6 +935,7 @@ export class Renderer3D {
     const box = new THREE.Box3(), sphere = new THREE.Sphere();
     // Characters and rolling balls set their own visibility each frame (see _inSight).
     const skip = new Set([this.sky, this.sea, this.particles?.puffs, this.particles?.conf, ...this.rollerViews,
+      this.scenery?.backdrop, ...this.bouncerViews.map((v) => v.g), ...this.blinkViews.map((v) => v.m),
       ...this.doorViews.map((v) => v.m), ...this.ghostViews.map((v) => v.m)]);
     for (const c of this.chars.values()) { skip.add(c.root); skip.add(c.shadow); }
     const add = (o, moving) => {
@@ -974,52 +984,6 @@ export class Renderer3D {
     const tex = this.pmrem.fromScene(envScene, 0.02).texture;
     this.envCache.set(key, tex);
     return tex;
-  }
-
-  _buildClouds(scene, W, H) {
-    const puffs = [];
-    const n = Math.round(14 + H / 12);
-    for (let i = 0; i < n; i++) {
-      const side = i % 2 ? -1 : 1;
-      const cx = side < 0 ? -20 - Math.random() * 80 : W + 20 + Math.random() * 80;
-      const cz = -60 + Math.random() * (H + 120);
-      const cy = -6 + Math.random() * 26;
-      const k = 3 + Math.floor(Math.random() * 4);
-      for (let j = 0; j < k; j++) {
-        puffs.push([cx + (j - k / 2) * 3.2, cy + Math.random() * 1.6, cz + (Math.random() - 0.5) * 4, 2.4 + Math.random() * 2.2]);
-      }
-    }
-    const mesh = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(1, 2),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: 0xffffff, emissiveIntensity: 0.25 }),
-      puffs.length,
-    );
-    puffs.forEach(([x, y, z, s], i) => {
-      tmpM.compose(tmpV.set(x, y, z), tmpQ.identity(), tmpS.set(s, s * 0.75, s));
-      mesh.setMatrixAt(i, tmpM);
-    });
-    scene.add(this._own(mesh));
-  }
-
-  _buildDecor(scene, W, H, th) {
-    // Floating candy rings and balloons around the course (pure decoration).
-    this.decor = [];
-    const colors = [0xff5fa2, 0xffd23f, 0x5b8cff, 0x3ddc97, 0xff8c42, 0xb47cff];
-    const torus = new THREE.TorusGeometry(2.2, 0.55, 16, 40);
-    const ball = new THREE.SphereGeometry(1.6, 24, 16);
-    const n = Math.round(8 + H / 25);
-    for (let i = 0; i < n; i++) {
-      const side = i % 2 ? -1 : 1;
-      const x = side < 0 ? -8 - Math.random() * 18 : W + 8 + Math.random() * 18;
-      const z = Math.random() * H;
-      const y = 1 + Math.random() * 9;
-      const mat = new THREE.MeshPhysicalMaterial({ color: colors[i % colors.length], roughness: 0.25, clearcoat: 1 });
-      const m = new THREE.Mesh(i % 3 ? ball : torus, mat);
-      m.position.set(x, y, z);
-      m.castShadow = false;
-      scene.add(this._own(m));
-      this.decor.push({ m, y, ph: Math.random() * TAU, ring: !(i % 3) });
-    }
   }
 
   _buildFloors(world, th) {
@@ -1539,6 +1503,144 @@ export class Renderer3D {
     return { g, slab };
   }
 
+  // ---- rotating hammers, disappearing platforms, bouncing balls, bumper carousels
+
+  _buildHammer(h, th) {
+    const g = new THREE.Group();
+    g.position.set(h.x * S, 0, h.y * S);
+    // The post reaches right down to the sea (some hammers stand beside a bridge).
+    const postH = 6.4 - SEA_Y;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry((h.hub || 16) * S, (h.hub || 16) * S * 1.2, postH, 20),
+      new THREE.MeshPhysicalMaterial({ color: 0x6c5fa0, roughness: 0.3, clearcoat: 0.8 }));
+    post.position.y = 6.4 - postH / 2;
+    post.castShadow = true;
+    g.add(post);
+    const rotor = new THREE.Group();
+    rotor.position.y = 6.1;
+    g.add(rotor);
+    const armMat = new THREE.MeshPhysicalMaterial({ color: th.bar || 0xff5757, roughness: 0.3, clearcoat: 0.8 });
+    const tex = stripeTexture("#ffd23f", "#ff8c42");
+    tex.repeat.set(1, 3);
+    const headMat = new THREE.MeshPhysicalMaterial({ map: tex, roughness: 0.25, clearcoat: 1 });
+    const capMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, clearcoat: 1 });
+    const L = h.arm * S, r = h.r * S;
+    for (let k = 0; k < h.heads; k++) {
+      const arm = new THREE.Group();
+      arm.rotation.y = -(k * TAU) / h.heads;
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(L, 0.45, 0.45), armMat);
+      beam.position.x = L / 2;
+      beam.castShadow = true;
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 4.6, 8), armMat);
+      rod.position.set(L, -2.3, 0);
+      // The hammer head: a drum lying along the direction it swings.
+      const head = new THREE.Mesh(new THREE.CylinderGeometry(r, r, r * 2.1, 24), headMat);
+      head.rotation.x = Math.PI / 2;
+      head.position.set(L, -6.1 + r + 0.15, 0);
+      head.castShadow = true;
+      const caps = [-1, 1].map((sd) => {
+        const c = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.05, r * 1.05, 0.25, 24), capMat);
+        c.rotation.x = Math.PI / 2;
+        c.position.set(L, head.position.y, sd * r * 1.05);
+        return c;
+      });
+      arm.add(beam, rod, head, ...caps);
+      rotor.add(arm);
+    }
+    this.scene.add(this._own(g));
+    return { g, rotor };
+  }
+
+  _buildBlink(p, th) {
+    const geo = slabGeometry(p.x, p.y, p.w, p.h, 0.7, 0.5, 0.15);
+    const color = new THREE.Color(p.color || "#40d9ff");
+    const mat = new THREE.MeshPhysicalMaterial({
+      color, emissive: color, emissiveIntensity: 0.35, roughness: 0.15, clearcoat: 1, transparent: true, opacity: 0.92,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.receiveShadow = true;
+    // A faint outline stays where the platform will come back.
+    const ghost = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.0 }));
+    this.scene.add(this._own(m), this._own(ghost));
+    return { m, mat, ghost, color };
+  }
+
+  _buildBouncer(o) {
+    const g = new THREE.Group();
+    const tex = canvasTexture(256, 128, (c, w, h) => {
+      c.fillStyle = o.color || "#ff8c42";
+      c.fillRect(0, 0, w, h);
+      c.fillStyle = "rgba(255,255,255,0.9)";
+      for (let i = 0; i < 4; i++) { c.fillRect((i * w) / 4, 0, w / 12, h); }
+      c.fillStyle = "#ffd23f";
+      c.fillRect(0, h * 0.45, w, h * 0.1);
+    });
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(o.r * S, 32, 20),
+      new THREE.MeshPhysicalMaterial({ map: tex, roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.1 }));
+    ball.castShadow = true;
+    g.add(ball);
+    // A dark spot on the ground grows as the ball comes down: your cue to move.
+    const spot = new THREE.Mesh(new THREE.CircleGeometry(o.r * S, 32),
+      new THREE.MeshBasicMaterial({ color: 0x2a1b5e, transparent: true, opacity: 0.3, depthWrite: false }));
+    spot.rotation.x = -Math.PI / 2;
+    this.scene.add(this._own(g), this._own(spot));
+    return { g, ball, spot };
+  }
+
+  _buildOrbitTracks(world) {
+    const seen = new Set();
+    for (const b of world.bumpers) {
+      if (!b.orbit) continue;
+      const key = `${b.ox},${b.oy},${b.orbit}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const ring = new THREE.Mesh(new THREE.RingGeometry((b.orbit - b.r * 0.4) * S, (b.orbit + b.r * 0.4) * S, 64),
+        new THREE.MeshBasicMaterial({ color: 0x2a1b5e, transparent: true, opacity: 0.18, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(b.ox * S, 0.03, b.oy * S);
+      this.scene.add(this._own(ring));
+    }
+  }
+
+  _syncNew(world, alpha, clock, dt) {
+    world.hammers.forEach((h, i) => {
+      const a = lerp(h.pangle ?? h.angle, h.angle, alpha);
+      this.hammerViews[i].rotor.rotation.y = -a;
+    });
+    world.blinks.forEach((p, i) => {
+      const v = this.blinkViews[i];
+      const warn = world.blinkWarn(p, world.time);
+      const inSight = this._inSight(p.x + p.w / 2, p.y + p.h / 2);
+      v.m.visible = warn >= 0 && inSight;
+      v.ghost.visible = inSight;
+      v.ghost.material.opacity = warn < 0 ? 0.45 + Math.sin(clock * 6) * 0.15 : 0;
+      if (warn >= 0) {
+        const flick = warn > 0 ? (Math.sin(clock * (18 + warn * 40)) > 0 ? 1 : 0) : 0;
+        v.mat.opacity = 0.92 - warn * 0.45;
+        v.mat.emissiveIntensity = 0.35 + flick * 1.1;
+        v.m.position.y = -warn * 0.25;
+      }
+    });
+    world.bouncers.forEach((o, i) => {
+      const v = this.bouncerViews[i];
+      const x = lerp(o.pbx ?? o.bx, o.bx, alpha), z = lerp(o.pbz ?? o.bz, o.bz, alpha);
+      const show = this._inSight(x, o.y);
+      v.g.visible = v.spot.visible = show;
+      if (!show) return;
+      const squash = z < 6 ? 1 - (6 - z) / 6 * 0.22 : 1;
+      v.g.position.set(x * S, (z + o.r * squash) * S, o.y * S);
+      v.ball.scale.set(2 - squash, squash, 2 - squash);
+      v.ball.rotation.z = -x * S / (o.r * S);
+      v.spot.position.set(x * S, 0.04, o.y * S);
+      const k = Math.max(0.25, 1 - z / (o.height || 200));
+      v.spot.scale.setScalar(k);
+      v.spot.material.opacity = 0.12 + 0.35 * k;
+    });
+    world.bumpers.forEach((b, i) => {
+      if (b.orbit) this.bumpers[i].g.position.set(b.x * S, 0, b.y * S);
+    });
+  }
+
   _logView(i) {
     if (!this.logViews[i]) {
       const tex = stripeTexture("#b5733f", "#9a5f30");
@@ -1687,8 +1789,11 @@ export class Renderer3D {
       for (let k = 0; k < 3; k++) {
         // Low over the arena, where the sun lights them (high up they'd show their dark undersides).
         const h = 1.2 + Math.random() * 5;
+        // Long races: snow only falls around the camera, where you can see it.
+        const race = L.type === "race", cam = this.camera.position;
+        const zz = race ? cam.z - 4 - Math.random() * 40 : Math.random() * L.bounds.h * S;
         this.particles.emit({
-          x: Math.random() * L.bounds.w * S, y: h, z: Math.random() * L.bounds.h * S,
+          x: Math.random() * L.bounds.w * S, y: h, z: zz,
           vx: wx, vy: -1.6, vz: wz, life: h / 1.6, size: 0.1, color: 0xffffff, drag: 0,
         });
       }
@@ -1757,11 +1862,7 @@ export class Renderer3D {
       const sp = Math.hypot(r.vx, r.vy) || 1;
       v.quaternion.setFromAxisAngle(tmpV.set(r.vy / sp, 0, -r.vx / sp), r.rot);
     }
-    for (const d of this.decor) {
-      d.m.position.y = d.y + Math.sin(clock * 0.8 + d.ph) * 0.6;
-      d.m.rotation.y = clock * 0.3 + d.ph;
-      if (d.ring) d.m.rotation.x = 0.6 + Math.sin(clock * 0.5 + d.ph) * 0.3;
-    }
+    this._syncNew(world, alpha, clock, dt);
     this.seaTex.offset.set(clock * 0.004, clock * 0.006);
 
     if (this.tileMesh) this._syncTiles(world);
@@ -1949,6 +2050,7 @@ export class Renderer3D {
 
     // Keep the sky centred on the camera and the shadow box around the action.
     this.sky.position.copy(cam.position);
+    this.scenery?.update(this.world?.clock ?? 0, cam.position);
     this.sun.target.position.copy(this.camLook);
     this.sun.position.copy(this.camLook).add(tmpV.set(-22, 40, 18));
   }
