@@ -2,16 +2,22 @@
 
 [![Tests](https://github.com/maulikhorasiya14/wobble-rush/actions/workflows/tests.yml/badge.svg)](https://github.com/maulikhorasiya14/wobble-rush/actions/workflows/tests.yml)
 
-An original obstacle-course party game that runs in your browser. Play alone against
-11 computer players, or **with up to 20 friends** in a multiplayer room joined with a
-4-letter code. Survive knockout rounds (races, crumbling-tile survival rounds and a
-last-one-standing final) and try to win the crown.
+An original 3D obstacle-course party game that runs in your browser. Play alone
+against 11 computer players, or **with up to 20 friends** in a multiplayer room joined
+with a 4-letter code. Survive knockout rounds (races, crumbling-tile survival rounds
+and a last-one-standing final) and try to win the crown.
 
 ![Main menu](docs/screenshots/menu.png)
 
 | Spin Sprint (race) | Tile Panic (survival) | Spin Arena (final) |
 |---|---|---|
 | ![Spin Sprint](docs/screenshots/race.png) | ![Tile Panic](docs/screenshots/tile-panic.png) | ![Spin Arena](docs/screenshots/spin-arena.png) |
+
+| Multiplayer lobby |
+|---|
+| ![A multiplayer lobby with six players and a room code](docs/screenshots/multiplayer-lobby.png) |
+
+**How it's built**
 
 - **Python (Flask)** serves the game and owns the game data: level layouts, physics
   tuning, the show format, scoring and the personal-best save file.
@@ -47,10 +53,16 @@ Set `WOBBLE_NO_BROWSER=1` to stop `run.py` from opening a browser tab.
 
 ### Playing with friends
 
-Press **Multiplayer** and **Create room** to get a 4-letter room code. Everyone who
-opens the game on this server presses **Multiplayer**, types the code and presses
-**Join**. To let friends on other computers reach your server, put it behind a tunnel
-such as ngrok or forward port 5000 on your router.
+1. Press **Multiplayer**, type your name and press **Create room**. You get a
+   4-letter room code and become the host.
+2. Friends open the game on the same server, press **Multiplayer**, type the code
+   and press **Join** (up to 20 players per room).
+3. The host picks 1–5 rounds and whether to fill empty spots with bots, then presses
+   **Start show**. Fewer players qualify each round until one takes the crown.
+
+Everyone needs to reach the same server: run it on a computer your friends can
+connect to, or put it behind a tunnel such as ngrok, or forward port 5000 on your
+router.
 
 Set `WOBBLE_HOST=127.0.0.1` to keep the game on your own computer only, and
 `WOBBLE_PORT` to use a different port.
@@ -65,12 +77,15 @@ Set `WOBBLE_HOST=127.0.0.1` to keep the game on your own computer only, and
 - 3 finals: Spin Arena, Cannon Clash, Pinball Pit
 - 11 AI rivals with different skill levels
 - **Multiplayer rooms**: up to 20 people join with a 4-letter code; the host picks
-  1–5 rounds and can fill empty spots with bots. Fewer players qualify each round
-  until one wins the crown. Knocked-out players keep watching, the host role moves
-  on if the host leaves, and each player's stats are saved to their own profile
+  1–5 rounds and can fill empty spots with bots (12 by default). Fewer players
+  qualify each round until one wins the crown. Your own character responds
+  instantly while everyone else moves smoothly; finished and knocked-out players
+  keep watching (← → to switch), the host role moves on if the host leaves, and
+  each player's stats and personal bests are saved to their own profile
 - Jumping, diving, jump-dive combos, checkpoints, knockbacks and stuns
 - Interactive tutorial with step-by-step tips, offered automatically on first play
 - Personal bests saved locally: best score, furthest round, crowns, best times per level
+  (each round's best is saved as soon as the round ends)
 - Pick your name and colour
 - 3D graphics: lit, shadowed candy courses, original animated characters (running,
   jumping, diving, landing squash, ragdoll tumbles when hit), particles and a smooth
