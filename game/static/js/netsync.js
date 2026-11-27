@@ -88,7 +88,7 @@ export function makeSnapshot(world, index, events) {
     });
   }
   return {
-    t: "snap", i: index, s: world.status, cd: r3(world.countdown), tm: r3(world.time), ck: r3(world.clock),
+    t: "snap", i: index, wt: r3(performance.now() / 1000), s: world.status, cd: r3(world.countdown), tm: r3(world.time), ck: r3(world.clock),
     ar: r1(world.arenaR), q: world.qualify,
     b: world.bodies.map(encodeBody),
     o,
@@ -102,54 +102,100 @@ export function makeSnapshot(world, index, events) {
 }
 
 /**
- * Plays the host's snapshots back into this browser's World, a little behind
- * real time so there is always a snapshot either side to blend between. This
- * hides network hiccups: everything moves smoothly even if snapshots arrive
- * unevenly.
+ * Keeps a steady "playback time" for a stream of timestamped updates from
+ * another computer. It learns the offset between that computer's clock and
+ * ours from when updates arrive, and stays a little behind the newest update
+ * so there is always one either side to blend between. The buffer grows when
+ * updates arrive unevenly and shrinks again when the connection is steady.
+ * Playback advances at exactly real-time speed, nudged very gently, so
+ * movement never speeds up or slows down in visible jerks.
+ */
+export class Timeline {
+  constructor(interval = SNAP_EVERY) {
+    this.interval = interval;  // expected time between updates
+    this.offset = null;        // their clock minus ours, for the fastest arrivals
+    this.late = 0;             // recent worst lateness (seconds), decays slowly
+    this.t = null;             // playback time on their clock
+    this.last = null;          // our clock at the previous step
+  }
+
+  /** An update stamped `remoteT` (seconds, their clock) arrived at `localT` (ours). */
+  arrive(remoteT, localT) {
+    const s = remoteT - localT;
+    if (this.offset === null) { this.offset = s; return; }
+    if (s > this.offset) this.offset = s;                 // quickest arrival yet
+    else this.offset += (s - this.offset) * 0.002;        // follow clock drift slowly
+    this.late = Math.max(this.offset - s, this.late * 0.995);
+  }
+
+  /** How far behind their newest time we play: one update gap plus room for jitter. */
+  get delay() {
+    return Math.min(0.35, Math.max(0.05, this.interval + this.late * 1.25 + 0.012));
+  }
+
+  /** Playback time for our clock `localT` (call once per frame). */
+  step(localT) {
+    const target = localT + this.offset - this.delay;
+    if (this.t === null || Math.abs(target - this.t) > 0.5) this.t = target;
+    else {
+      this.t += localT - this.last;              // real-time speed...
+      this.t += (target - this.t) * 0.03;        // ...with a very gentle correction
+    }
+    this.last = localT;
+    return this.t;
+  }
+}
+
+/** Find the two updates around time t in a time-sorted buffer, and how far between them t is. */
+function bracket(buf, t) {
+  let i = 0;
+  while (i < buf.length - 2 && buf[i + 1].wt <= t) i++;
+  const a = buf[i], b = buf[Math.min(i + 1, buf.length - 1)];
+  const span = b.wt - a.wt;
+  const u = span > 0 ? Math.max(0, Math.min(1, (t - a.wt) / span)) : 1;
+  return [i, a, b, u];
+}
+
+/**
+ * Plays the host's snapshots back into this browser's World (see Timeline).
+ * Everyone, the host included, sees the round this way.
  */
 export class Mirror {
-  /** @param delay seconds to stay behind the newest snapshot */
-  constructor(world, ownId, delay = 0.1) {
+  constructor(world, ownId) {
     this.world = world;
     this.ownId = ownId;
-    this.delay = delay;
     this.buf = [];
-    this.clock = null;     // the host-clock moment being shown
-    this.emitted = -1;     // newest snapshot whose events were played
+    this.time = new Timeline();
+    this.emitted = -Infinity;  // newest snapshot whose events were played
     this.started = false;
   }
 
-  push(snap) {
+  push(snap, now = performance.now() / 1000) {
     const last = this.buf[this.buf.length - 1];
-    if (last && snap.ck <= last.ck) return; // out of order / duplicate
+    if (last && snap.wt <= last.wt) return; // out of order / duplicate
+    snap.bd = snap.b.map(decodeBody);       // decode once, not every frame
     this.buf.push(snap);
-    if (this.clock === null) this.clock = snap.ck - this.delay;
+    this.time.arrive(snap.wt, now);
   }
 
-  /** Advance by dt and write the blended state into the World. Returns false before the first snapshot. */
-  frame(dt) {
+  /** Write the blended state for this moment into the World. Returns false before the first snapshot. */
+  frame(now = performance.now() / 1000) {
     const buf = this.buf;
     if (!buf.length) return false;
-    const newest = buf[buf.length - 1];
-    // Follow the host's clock: run a bit faster when behind, slower when ahead
-    // (also copes with the host fast-forwarding the end of a race).
-    const err = newest.ck - this.delay - this.clock;
-    if (Math.abs(err) > 1.5) this.clock = newest.ck - this.delay;
-    else this.clock += dt * Math.max(0.3, Math.min(5, 1 + err * 4));
-
-    let i = 0;
-    while (i < buf.length - 2 && buf[i + 1].ck <= this.clock) i++;
-    const s0 = buf[i], s1 = buf[Math.min(i + 1, buf.length - 1)];
-    const span = s1.ck - s0.ck;
-    const u = span > 0 ? Math.max(0, Math.min(1, (this.clock - s0.ck) / span)) : 1;
+    const t = this.time.step(now);
+    const [i, s0, s1, u] = bracket(buf, t);
     this._apply(s0, s1, u);
-    // Play the effects (jumps, hits, finishes...) of every snapshot we've reached.
+    // Play the effects (jumps, hits, finishes...) of every snapshot we've
+    // reached; after a long pause (hidden tab) skip stale ones instead of
+    // replaying a pile of them at once.
     for (const s of buf) {
-      if (s.ck > this.clock) break;
-      if (s.ck <= this.emitted) continue;
-      this.emitted = s.ck;
+      if (s.wt > t) break;
+      if (s.wt <= this.emitted) continue;
+      this.emitted = s.wt;
+      const stale = t - s.wt > 1;
       for (const e of s.ev || []) {
         if (e.id === this.ownId && LOCAL_EVENTS.has(e.type)) continue;
+        if (stale && e.type !== "end" && e.type !== "go" && e.type !== "finish" && e.type !== "eliminated") continue;
         this.world.events.push(e);
       }
     }
@@ -157,6 +203,8 @@ export class Mirror {
     this.started = true;
     return true;
   }
+
+  get delay() { return this.time.delay; }
 
   _apply(s0, s1, u) {
     const w = this.world;
@@ -176,17 +224,16 @@ export class Mirror {
 
     const own = w.bodies.find((b) => b.id === this.ownId);
     w.bodies.forEach((b, k) => {
-      const a = s0.b[k], c = s1.b[k];
-      if (!a || !c) return;
+      const A = s0.bd[k], C = s1.bd[k];
+      if (!A || !C) return;
       if (b === own) {
         // Our own character moves here; take only the host's verdicts.
-        const host = decodeBody(c);
+        const host = C;
         if (host.crown) b.crown = true;
         if (host.finished && !b.finished) { b.finished = true; b.finishTime = host.finishTime; }
         if (host.eliminated && host.hidden && !b.eliminated) { b.eliminated = true; b.hidden = true; }
         return;
       }
-      const A = decodeBody(a), C = decodeBody(c);
       // Teleports (respawning at a checkpoint) jump straight there instead of sliding.
       const jump = Math.abs(A.x - C.x) + Math.abs(A.y - C.y) > 160;
       for (const f of Object.keys(C)) {
@@ -254,5 +301,47 @@ export class Mirror {
         b.x = nx; b.y = ny;
       }
     }
+  }
+}
+
+/**
+ * Host side: one player's reports, played back smoothly (see Timeline) so the
+ * host's snapshots show them moving evenly however unevenly reports arrive.
+ */
+export class RemoteTrack {
+  constructor() {
+    this.buf = [];
+    this.time = new Timeline(SNAP_EVERY);
+    this.emitted = -Infinity;
+  }
+
+  push(t, row, ev, now) {
+    const last = this.buf[this.buf.length - 1];
+    if (typeof t !== "number" || (last && t <= last.wt)) return;
+    this.buf.push({ wt: t, body: decodeBody(row), ev: Array.isArray(ev) ? ev : [] });
+    if (this.buf.length > 90) this.buf.shift();
+    this.time.arrive(t, now);
+  }
+
+  /** The player's blended state for this moment, and any effects reached. */
+  sample(now) {
+    if (!this.buf.length) return null;
+    const t = this.time.step(now);
+    const [i, a, b, u] = bracket(this.buf, t);
+    const A = a.body, B = b.body;
+    const out = { ...(u < 0.5 ? A : B) };
+    const jump = Math.abs(A.x - B.x) + Math.abs(A.y - B.y) > 160;
+    if (!jump) for (const f of BLEND) out[f] = lerp(A[f], B[f], u);
+    // Being knocked out must never be missed, even between samples.
+    out.eliminated = A.eliminated || B.eliminated;
+    const events = [];
+    for (const r of this.buf) {
+      if (r.wt > t) break;
+      if (r.wt <= this.emitted) continue;
+      this.emitted = r.wt;
+      events.push(...r.ev);
+    }
+    if (i > 0) this.buf.splice(0, i);
+    return { body: out, events };
   }
 }

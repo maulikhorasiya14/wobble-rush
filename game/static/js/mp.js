@@ -127,6 +127,7 @@ export class Multiplayer {
         this.me = msg.you;
         this.code = msg.code;
         this.color = msg.color;
+        this.secret = msg.secret;
         break; // the room's details follow straight away
       case "error":
         if (this.waiting) { this.waiting.reject(new RoomError(msg.message)); this.waiting = null; }
@@ -144,10 +145,11 @@ export class Multiplayer {
         this._onRound(msg);
         break;
       case "snap":
-        if (!this.isHost && this.mirror && this.round && msg.i === this.round.index) this.mirror.push(msg);
+        if (this.mirror && this.round && msg.i === this.round.index) this.mirror.push(msg);
         break;
       case "state":
-        if (this.isHost && this.worker) this.worker.postMessage({ t: "state", id: msg.id, s: msg.s, ev: msg.ev });
+        // Only reaches the page if the host's worker couldn't connect by itself.
+        if (this.isHost && this.worker) this.worker.postMessage({ t: "state", id: msg.id, at: msg.at, s: msg.s, ev: msg.ev });
         break;
       case "left":
         if (this.isHost && this.worker) this.worker.postMessage({ t: "left", id: msg.id });
@@ -241,8 +243,7 @@ export class Multiplayer {
     this.world = new World(lvl, data.physics, msg.roster, {
       qualify: msg.qualify, countdown: msg.intro + 3, localId: this.me, multiplayer: true,
     });
-    // The host's own snapshots don't cross the network, so it needs less slack.
-    this.mirror = new Mirror(this.world, this.me, this.isHost ? 0.06 : 0.1);
+    this.mirror = new Mirror(this.world, this.me);
     app.world = this.world;
     app.mpMenu = false;
     app.onSpace = null;
@@ -274,11 +275,12 @@ export class Multiplayer {
     if (!this.worker) {
       this.worker = new Worker(new URL("./hostworker.js", import.meta.url), { type: "module" });
       this.worker.onmessage = ({ data: m }) => {
-        if (m.t === "snap") {
-          this.send(m.text);
-          if (this.mirror && this.round && this.isHost) this.mirror.push(JSON.parse(m.text));
-        } else if (m.t === "round_end") {
-          this.send({ t: "round_end", index: m.index, qualified: m.qualified, results: m.results });
+        // Normally the worker talks to the server itself; this is the fallback
+        // where the page passes its messages on.
+        if (m.t !== "relay") return;
+        this.send(m.text);
+        if (m.text.startsWith('{"t":"snap"') && this.mirror && this.round && this.isHost) {
+          this.mirror.push(JSON.parse(m.text)); // the server doesn't echo relayed snapshots back
         }
       };
       this.worker.onerror = (e) => console.error("host worker failed:", e.message);
@@ -286,6 +288,7 @@ export class Multiplayer {
     this.worker.postMessage({
       t: "start", level: lvl, physics: this.ui.data.physics, roster: msg.roster,
       qualify: msg.qualify, countdown: msg.intro + 3, index: msg.index,
+      cred: { id: this.me, secret: this.secret },
     });
   }
 
@@ -321,7 +324,7 @@ export class Multiplayer {
    */
   frame(dt, playing) {
     const w = this.world;
-    if (!this.mirror.frame(dt)) return 1; // nothing from the host yet
+    if (!this.mirror.frame()) return 1; // nothing from the host yet
     const mine = this.own();
     if (!mine) return 1;
     this.acc += dt;
@@ -346,7 +349,7 @@ export class Multiplayer {
       // Skip identical reports while standing still.
       const key = row.join(",");
       if (ev.length || key !== this.lastRow || this.quietT > 0.5) {
-        this.send({ t: "state", s: row, ev });
+        this.send({ t: "state", at: Math.round(performance.now()) / 1000, s: row, ev });
         this.lastRow = key;
         this.quietT = 0;
       } else {

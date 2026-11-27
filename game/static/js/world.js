@@ -803,10 +803,13 @@ export class World {
       if (d2 >= minD * minD || Math.abs(o.z - b.z) > 28) continue;
       const d = Math.sqrt(d2) || 0.01;
       const nx = dx / d, ny = dy / d;
-      b.x += nx * (minD - d);
-      b.y += ny * (minD - d);
+      // Other people are shown a moment in the past, so ease apart from them
+      // instead of being shoved by where they were; bots push as usual.
+      const k = o.isHuman ? 0.25 : 1;
+      b.x += nx * (minD - d) * k;
+      b.y += ny * (minD - d) * k;
       const rel = (b.vx - o.vx) * nx + (b.vy - o.vy) * ny;
-      if (rel < 0) { b.vx -= nx * rel * 0.5; b.vy -= ny * rel * 0.5; }
+      if (rel < 0 && !o.isHuman) { b.vx -= nx * rel * 0.5; b.vy -= ny * rel * 0.5; }
       if (o.diving && !b.diving) { b.stun = Math.max(b.stun, 0.3); b.hitT = 0.2; }
     }
   }

@@ -7,8 +7,11 @@ instantly) and reports where it is ("state"); the room host's browser runs
 the rest of the round (bots, obstacles, the rules) in a background worker and
 sends back what everyone should see ("snapshots").
 
-    player browser --state--> server --state--> host browser (runs the round)
-    player browser <--snap--- server <--snap--- host browser
+    player browser --state--> server --state--> host's game worker (runs the round)
+    player browser <--snap--- server <--snap--- host's game worker
+
+The host's worker has its own connection ("attach", proved with a secret the
+host's page was given), so the round never waits on the host's page.
 
 If the host leaves, the next player in the room becomes host and the current
 round starts again.
@@ -17,6 +20,8 @@ from __future__ import annotations
 
 import json
 import random
+import secrets
+import socket
 import threading
 import time
 import uuid
@@ -59,6 +64,9 @@ class Conn:
         self.room: Room | None = None
         self.closed = False
         self.last_seen = time.monotonic()
+        self.secret = secrets.token_hex(16)  # lets this player's game worker attach
+        self.sim: Conn | None = None         # host only: its game worker's connection
+        self.owner: Conn | None = None       # set on a game worker's connection
         self._q: deque[list] = deque()  # [text, droppable, key]
         self._cv = threading.Condition()
         # This thread is the only one that writes to the socket: the socket
@@ -149,6 +157,7 @@ class Lobby:
 
     def __init__(self, rng: random.Random | None = None, timers: bool = True):
         self.rooms: dict[str, Room] = {}
+        self.players: dict[str, Conn] = {}  # player id -> connection
         self.lock = threading.RLock()
         self.rng = rng or random.Random()
         self.use_timers = timers  # tests turn timers off and call advance() instead
@@ -165,8 +174,17 @@ class Lobby:
         kind = msg.get("t")
         conn.last_seen = time.monotonic()
         with self.lock:
+            if conn.owner is not None:
+                # The host's game worker: it sends the round, nothing else.
+                if kind == "snap":
+                    self._snap(conn.owner, text, from_worker=True)
+                elif kind == "round_end":
+                    self._round_end(conn.owner, msg)
+                return
             if kind == "snap":
                 self._snap(conn, text)
+            elif kind == "attach":
+                self._attach(conn, msg)
             elif kind == "state":
                 self._state(conn, msg)
             elif kind == "create":
@@ -183,6 +201,19 @@ class Lobby:
                 self.disconnect(conn)
             elif kind == "ping":
                 conn.send({"t": "pong", "at": msg.get("at")})
+
+    def _attach(self, conn: Conn, msg: dict) -> None:
+        owner = self.players.get(msg.get("id")) if isinstance(msg.get("id"), str) else None
+        if conn.room or not owner or not secrets.compare_digest(str(msg.get("secret")), owner.secret):
+            return conn.send({"t": "error", "message": "attach refused"})
+        conn.owner = owner
+        owner.sim = conn
+        conn.send({"t": "attached"})
+
+    def _to_round(self, room: Room) -> Conn:
+        """Where messages for the running round go: the host's game worker if attached."""
+        sim = room.host.sim
+        return sim if sim is not None and not sim.closed else room.host
 
     def _error(self, conn: Conn, message: str) -> None:
         conn.send({"t": "error", "message": message})
@@ -239,7 +270,8 @@ class Lobby:
         conn.id = "p" + uuid.uuid4().hex[:8]
         conn.room = room
         room.players.append(conn)
-        conn.send({"t": "joined", "you": conn.id, "code": room.code, "color": conn.color,
+        self.players[conn.id] = conn
+        conn.send({"t": "joined", "you": conn.id, "code": room.code, "color": conn.color, "secret": conn.secret,
                    "intro": INTRO_SECONDS, "result": RESULT_SECONDS})
         if conn.color != wanted:
             conn.send({"t": "notice", "message": "Someone in this room already has your colour, so you've been given a different one."})
@@ -318,10 +350,12 @@ class Lobby:
             room.roster = []
             self._show_over(room)
 
-    def _snap(self, conn: Conn, text: str) -> None:
+    def _snap(self, conn: Conn, text: str, from_worker: bool = False) -> None:
         room = conn.room
         if room and room.host is conn and room.phase == "round":
-            room.broadcast(text, skip=conn, droppable=True)
+            # From the worker, everyone (the host's page too) needs it; relayed
+            # by the host's page, the page already has it.
+            room.broadcast(text, skip=None if from_worker else conn, droppable=True)
 
     def _state(self, conn: Conn, msg: dict) -> None:
         """A player reports where their character is; pass it to the host's game."""
@@ -339,9 +373,9 @@ class Lobby:
             if isinstance(e, dict) and e.get("type") in STATE_EVENTS and len(events) < 12:
                 events.append({k: e[k] for k in ("type", "x", "y", "dx", "dy")
                                if k in e and (k == "type" or isinstance(e[k], (int, float)))})
-        # Only the newest report matters (unless it carries effects like a jump).
-        room.host.send({"t": "state", "id": conn.id, "s": row, "ev": events},
-                       key=None if events else "state:" + conn.id)
+        at = msg.get("at")
+        at = at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+        self._to_round(room).send({"t": "state", "id": conn.id, "at": at, "s": row, "ev": events})
 
     def _round_end(self, conn: Conn, msg: dict) -> None:
         room = conn.room
@@ -440,6 +474,12 @@ class Lobby:
 
     def disconnect(self, conn: Conn) -> None:
         with self.lock:
+            if conn.owner is not None:  # a host's game worker went away
+                if conn.owner.sim is conn:
+                    conn.owner.sim = None
+                return
+            if self.players.get(conn.id) is conn:
+                del self.players[conn.id]
             room = conn.room
             if not room:
                 return
@@ -461,7 +501,7 @@ class Lobby:
                     room.broadcast({"t": "notice", "message": f"The host left. {room.host.name} is the new host: restarting the round."})
                     self._start_round(room)
                 elif in_round:
-                    room.host.send({"t": "left", "id": conn.id})
+                    self._to_round(room).send({"t": "left", "id": conn.id})
             elif room.phase == "lobby" and was_host:
                 room.broadcast({"t": "notice", "message": f"{room.host.name} is the new host."})
 
@@ -540,6 +580,10 @@ def init_multiplayer(app) -> Lobby:
 
     @sock.route("/ws")
     def ws_endpoint(ws):
+        try:  # send small messages immediately instead of bundling them (up to ~40 ms)
+            ws.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (AttributeError, OSError):
+            pass
         conn = Conn(ws.send, identity.profile_path())
         sockets[conn] = ws
         try:

@@ -19,6 +19,10 @@ class FakeConn:
         self.color = None
         self.room = None
         self.sent = []
+        self.secret = "s3cret"
+        self.sim = None
+        self.owner = None
+        self.closed = False
 
     def send(self, msg, droppable=False, key=None):
         self.sent.append(json.loads(msg) if isinstance(msg, str) else msg)
@@ -136,7 +140,7 @@ def test_states_go_to_host_and_snapshots_to_everyone(lobby, conn):
     say(lobby, host, t="start")
     say(lobby, a, t="state", s=[1.5, 2, "x", True], ev=[{"type": "jump", "x": 3, "y": 4}, {"type": "hack"}])
     got = host.last("state")
-    assert got == {"t": "state", "id": a.id, "s": [1.5, 2, 0, 0], "ev": [{"type": "jump", "x": 3, "y": 4}]}
+    assert got == {"t": "state", "id": a.id, "at": None, "s": [1.5, 2, 0, 0], "ev": [{"type": "jump", "x": 3, "y": 4}]}
     say(lobby, a, t="snap", i=0)  # only the host may send snapshots
     assert "snap" not in b.kinds()
     say(lobby, host, t="snap", i=0, b=[])
@@ -245,3 +249,27 @@ def test_players_who_left_are_marked_in_standings(lobby, conn):
     lobby.advance(code)
     standings = {s["id"]: s for s in a.last("show_over")["standings"]}
     assert standings[b.id]["left"] is True and standings[a.id]["won"] is True
+
+
+def test_host_game_worker_attaches_and_runs_the_round(lobby, conn):
+    code, host, (a, b) = make_room(lobby, conn, rounds=2)
+    worker = conn()
+    say(lobby, worker, t="attach", id=host.id, secret="wrong")
+    assert worker.last("error") and host.sim is None
+    say(lobby, worker, t="attach", id=host.id, secret=host.secret)
+    assert worker.last("attached") and host.sim is worker
+    say(lobby, host, t="start")
+    # Reports go straight to the worker, with their timestamp.
+    say(lobby, a, t="state", at=12.5, s=[1, 2], ev=[])
+    assert worker.last("state")["at"] == 12.5 and "state" not in host.kinds()
+    # The worker's snapshots reach everyone, the host's page included.
+    say(lobby, worker, t="snap", i=0, b=[])
+    assert host.last("snap") and a.last("snap") and b.last("snap")
+    # Its round result counts as the host's.
+    say(lobby, worker, t="round_end", index=0, qualified=[host.id, a.id], results={})
+    assert a.last("round_result")["qualified"] == [host.id, a.id]
+    # Players leaving are reported to the worker; the worker going away detaches it.
+    lobby.advance(code)
+    lobby.disconnect(b)
+    lobby.disconnect(worker)
+    assert host.sim is None and host.room is not None
