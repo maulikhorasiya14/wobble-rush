@@ -17,6 +17,8 @@ export function makeBrain(skill) {
     best: Infinity,
     stuckT: 0,
     panicT: 0,
+    waitT: 0,
+    engaged: false,
   };
 }
 
@@ -25,10 +27,28 @@ export function botIntent(b, w, dt) {
   const it = { mx: 0, my: 0, jump: false, dive: false };
   if (b.stun > 0 || b.falling) return it;
 
+  // Human-like slips in races: clumsy bots sometimes trip...
+  const L = w.level;
+  if (L.bot_stumble && b.z <= 0 && Math.random() < L.bot_stumble * (1 - br.skill) * dt) {
+    b.stun = 0.6;
+    b.hitT = 0.2;
+    w.events.push({ type: "bump", id: b.id, x: b.x, y: b.y, dx: b.fx, dy: b.fy });
+    return it;
+  }
+  // ...or zone out for a moment (deadly on crumbling tiles).
+  if (L.bot_dawdle && br.waitT <= 0 && b.z <= 0 && Math.random() < L.bot_dawdle * (1 - br.skill) * dt) {
+    br.waitT = 0.25 + Math.random() * 0.45;
+  }
+  // ...and some wait for a spinning bar to pass instead of jumping it.
+  if (br.waitT > 0) {
+    br.waitT -= dt;
+    return it;
+  }
+
   trackStuck(b, w, br, dt);
   br.think -= dt;
   if (br.think <= 0) {
-    br.think = (w.tiles ? 0.05 : 0.1) + (1 - br.skill) * 0.15 + Math.random() * 0.06;
+    br.think = (w.tiles || w.movers.length ? 0.05 : 0.1) + (1 - br.skill) * 0.15 + Math.random() * 0.06;
     // Timing noise: worse bots jump too early or too late more often.
     br.lead = 0.24 + (Math.random() - 0.5) * (0.08 + (1 - br.skill) * 0.3);
     steer(b, w, br);
@@ -47,8 +67,23 @@ export function botIntent(b, w, dt) {
     }
   }
 
+  if (br.jumpNow && b.z <= 0 && !b.diving) {
+    br.jumpNow = false;
+    it.jump = true;
+    return it;
+  }
   if (b.z <= 0 && !b.diving) {
-    if (gapAhead(b, w, br) || spinnerThreat(b, w, br)) it.jump = true;
+    const bar = spinnerThreat(b, w, br);
+    if (bar && L.bot_hesitation && !br.engaged) {
+      br.engaged = true;
+      if (Math.random() < L.bot_hesitation * (1.2 - br.skill)) {
+        br.waitT = 0.4 + Math.random() * 0.8;
+        it.mx = it.my = 0;
+        return it;
+      }
+    }
+    if (!bar) br.engaged = false;
+    if (bar || gapAhead(b, w, br)) it.jump = true;
   } else if (b.z > 0 && !b.diving && b.vz < 60 && shouldDive(b, w)) {
     it.dive = true;
   }
@@ -86,15 +121,16 @@ function goalPoint(b, w, br) {
     // Stand on a tile while it crumbles, then hop to a fresh neighbour.
     const t = br.target;
     const onIt = t && w.tileAt(b.x, b.y) === t;
-    const leaveAt = 0.3 + (1 - br.skill) * 0.25 * Math.random();
+    // Leave early enough to reach the next tile: crossing takes longer on big tiles.
+    const cross = w.tiles.cfg.pitch / (w.P.max_speed * b.speedMul);
+    const leaveAt = Math.min(w.tiles.cfg.crack_time * 0.85, 0.15 + cross * 0.5 + Math.random() * 0.1);
     const doomed = !t || t.state === "gone" || (t.state === "crack" && t.t < (onIt ? leaveAt : 0.55));
     if (doomed) br.target = pickTile(b, w);
     if (br.target) {
       const here = w.tileAt(b.x, b.y) === br.target;
       return { x: br.target.x, y: br.target.y, hold: here };
     }
-    const cfg = w.tiles.cfg;
-    return { x: cfg.x + (cfg.cols * cfg.pitch) / 2, y: cfg.y + (cfg.rows * cfg.pitch) / 2 };
+    return { x: w.tiles.cx, y: w.tiles.cy };
   }
   const A = L.arena;
   const rr = w.arenaR * 0.5;
@@ -106,8 +142,12 @@ function goalPoint(b, w, br) {
 
 function pickTile(b, w) {
   const cfg = w.tiles.cfg;
-  const cx = cfg.x + (cfg.cols * cfg.pitch) / 2, cy = cfg.y + (cfg.rows * cfg.pitch) / 2;
+  const cx = w.tiles.cx, cy = w.tiles.cy;
   const sp = Math.hypot(b.vx, b.vy) || 1;
+  // Neighbour offsets: 6 directions on a hex grid, 8 on a square one.
+  const dirs = w.tiles.hex
+    ? [0, 1, 2, 3, 4, 5].map((k) => [Math.cos((k * Math.PI) / 3) * cfg.pitch, Math.sin((k * Math.PI) / 3) * cfg.pitch])
+    : [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]].map(([a, b2]) => [a * cfg.pitch, b2 * cfg.pitch]);
   const others = w.bodies.filter((o) => o !== b && !o.eliminated && !o.falling);
   let best = null, bestScore = -Infinity;
   for (const t of w.tiles.list) {
@@ -115,11 +155,9 @@ function pickTile(b, w) {
     const d = Math.hypot(t.x - b.x, t.y - b.y);
     if (d < 20 || d > 260) continue;
     let n = 0;
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        const o = w.tileAt(t.x + dc * cfg.pitch, t.y + dr * cfg.pitch);
-        if (o && o.state === "solid") n++;
-      }
+    for (const [ox, oy] of dirs) {
+      const o = w.tileAt(t.x + ox, t.y + oy);
+      if (o && o.state === "solid") n++;
     }
     let blocked = 0;
     for (let f = 20; f < d; f += 20) {
@@ -141,18 +179,22 @@ function steer(b, w, br) {
   const distGoal = Math.hypot(goal.x - b.x, goal.y - b.y);
   if (goal.hold && distGoal < 10) { br.dx = 0; br.dy = 0; return; }
   const base = Math.atan2(goal.y - b.y, goal.x - b.x);
+  if (w.movers.length && waitForPlatform(b, w, br, base)) return;
   const maxProbe = w.tiles ? Math.max(24, distGoal + 8) : Infinity;
   const A = w.level.arena;
   let best = -Infinity, bestA = base;
   for (const off of OFFSETS) {
     const a = base + off, ca = Math.cos(a), sa = Math.sin(a);
     let s = Math.cos(off) * 1.2;
+    let onPad = !!w.padAt(b.x, b.y);
     for (const d of PROBES) {
       if (d > maxProbe) break;
       const px = b.x + ca * d, py = b.y + sa * d;
       const weight = 24 / d;
       const ahead = d / (w.P.max_speed * b.speedMul);
+      if (w.padAt(px, py)) { onPad = true; s += 0.2; continue; }
       if (!w.safeAt(px, py, ahead)) {
+        if (onPad) break; // the pad will throw us across this gap
         s -= !A && jumpLands(w, b, ca, sa) ? 0.35 : 4 * weight;
         break;
       }
@@ -167,6 +209,27 @@ function steer(b, w, br) {
   }
   br.dx = Math.cos(bestA);
   br.dy = Math.sin(bestA);
+}
+
+/**
+ * Gap toward the goal with a moving platform beyond it: stand at the edge and
+ * jump once the platform will be under us when we land. Returns true when it
+ * has set the bot's movement for this think.
+ */
+function waitForPlatform(b, w, br, base) {
+  const ux = Math.cos(base), uy = Math.sin(base);
+  if (w.safeAt(b.x + ux * 34, b.y + uy * 34, 0.15)) return false; // no gap right ahead
+  const air = airTime(w.P);
+  const target = w.moverAt(b.x + ux * 105, b.y + uy * 105, air) || w.onFloor(b.x + ux * 105, b.y + uy * 105);
+  if (target && w.safeAt(b.x + ux * 125, b.y + uy * 125, air + 0.1)) {
+    br.dx = ux;
+    br.dy = uy;
+    br.jumpNow = true;
+  } else {
+    br.dx = 0;
+    br.dy = 0;
+  }
+  return true;
 }
 
 function airTime(P) {

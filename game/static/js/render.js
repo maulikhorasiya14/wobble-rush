@@ -64,7 +64,7 @@ export class Renderer {
 
   // ------------------------------------------------------------------ frame
 
-  draw(world, followId, dt) {
+  draw(world, followId, dt, _alpha = 1) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (!world) {
@@ -107,6 +107,7 @@ export class Renderer {
     this._drawFloors(world, th);
     if (world.tiles) this._drawTiles(world, th);
     if (L.arena) this._drawArena(world, th);
+    this._drawExtras(world, th);
     this._drawLines(world);
     for (const s of world.spinners) this._drawSpinner(s, th, world);
 
@@ -114,6 +115,8 @@ export class Renderer {
     const items = [];
     for (const w of world.sliders) items.push({ y: w.y + w.h / 2, f: () => this._drawSlider(w) });
     for (const b of world.bumpers) items.push({ y: b.y, f: () => this._drawBumper(b) });
+    for (const p of world.pendulums) items.push({ y: p.y, f: () => this._drawBall(p.bx, p.y, p.r, "#ff5fa2", p.x) });
+    for (const r of world.rollers) items.push({ y: r.y, f: () => this._drawBall(r.x, r.y, r.r, "#f4fbff") });
     for (const b of world.bodies) {
       if (b.hidden || b.eliminated) continue;
       items.push({ y: b.y + (b.falling ? -1000 : 0), f: () => this._drawBody(b, world, b.id === followId) });
@@ -125,13 +128,13 @@ export class Renderer {
 
     // HUD-ish overlays in screen space
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    if (world.type === "race" && !world.tutorial) this._drawProgress(world, followId);
+    if (world.type === "race" && !world.tutorial) drawProgressBar(ctx, world, followId);
   }
 
   _updateCamera(world, followId, dt) {
     const L = world.level, cam = this.cam;
     let tx, ty, tz;
-    if (L.camera === "fit") {
+    if (L.camera !== "follow") {
       tz = Math.min(VIEW_W / (L.bounds.w + 120), VIEW_H / (L.bounds.h + 140));
       tx = L.bounds.w / 2;
       ty = L.bounds.h / 2 + 10;
@@ -196,47 +199,45 @@ export class Renderer {
   }
 
   _drawTiles(world, th) {
-    const ctx = this.ctx, cfg = world.tiles.cfg, s = cfg.size;
+    const ctx = this.ctx, cfg = world.tiles.cfg, s = cfg.size, hex = world.tiles.hex;
+    const shapePath = (x, y, size) => {
+      if (!hex) { roundRect(ctx, x - size / 2, y - size / 2, size, size, 8); return; }
+      const R = size / Math.sqrt(3);
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = Math.PI / 6 + (k * Math.PI) / 3;
+        ctx.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R);
+      }
+      ctx.closePath();
+    };
     for (const t of world.tiles.list) {
-      let x = t.x - s / 2, y = t.y - s / 2;
+      let x = t.x, y = t.y;
       if (t.state === "gone") {
         if (t.goneT > 0.5) continue;
         const k = 1 - t.goneT / 0.5;
         ctx.globalAlpha = k;
         ctx.fillStyle = th.side;
-        const ss = s * k;
-        roundRect(ctx, t.x - ss / 2, t.y - ss / 2 + t.goneT * 120, ss, ss, 8);
+        shapePath(t.x, t.y + t.goneT * 120, s * k);
         ctx.fill();
         ctx.globalAlpha = 1;
         continue;
       }
-      let top = (t.c + t.r) % 2 ? th.floorA : th.floorB;
+      let top = t.ring % 2 ? th.floorA : th.floorB;
       if (t.state === "crack") {
-        const k = 1 - t.t / cfg.crack_time;
+        const k = 1 - t.t / (t.max || cfg.crack_time);
         x += (Math.random() - 0.5) * 3 * k;
         y += (Math.random() - 0.5) * 3 * k;
         top = mix(top, th.crack, Math.min(1, 0.3 + k));
       }
       ctx.fillStyle = th.side;
-      roundRect(ctx, x, y + 6, s, s, 8);
+      shapePath(x, y + 6, s);
       ctx.fill();
       ctx.fillStyle = top;
-      roundRect(ctx, x, y, s, s, 8);
+      shapePath(x, y, s);
       ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      roundRect(ctx, x + 5, y + 4, s - 10, 6, 3);
+      ctx.fillStyle = "rgba(255,255,255,0.3)";
+      shapePath(x, y - 2, s * 0.6);
       ctx.fill();
-      if (t.state === "crack") {
-        ctx.strokeStyle = "rgba(90,50,20,0.6)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x + s * 0.2, y + s * 0.3);
-        ctx.lineTo(x + s * 0.5, y + s * 0.55);
-        ctx.lineTo(x + s * 0.8, y + s * 0.4);
-        ctx.moveTo(x + s * 0.5, y + s * 0.55);
-        ctx.lineTo(x + s * 0.45, y + s * 0.85);
-        ctx.stroke();
-      }
     }
   }
 
@@ -261,6 +262,127 @@ export class Renderer {
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(A.x, A.y, r - 2, 0, TAU);
+    ctx.stroke();
+  }
+
+  /** Belts, ice, wind, bounce pads and moving platforms (flat things on the floor). */
+  _drawExtras(world, th) {
+    const ctx = this.ctx;
+    for (const d of world.discs) {
+      ctx.fillStyle = th.side;
+      ctx.beginPath();
+      ctx.ellipse(d.x, d.y + 10, d.r, d.r, 0, 0, TAU);
+      ctx.fill();
+      for (let i = 0; i < 12; i++) {
+        ctx.fillStyle = i % 2 ? th.floorA : th.floorB;
+        ctx.beginPath();
+        ctx.moveTo(d.x, d.y);
+        ctx.arc(d.x, d.y, d.r, d.angle + (i / 12) * TAU, d.angle + ((i + 1) / 12) * TAU);
+        ctx.fill();
+      }
+    }
+    for (const p of world.popups) {
+      ctx.fillStyle = p.rise > 0.5 ? "#ff8c42" : "rgba(42,27,94,0.3)";
+      ctx.fillRect(p.x, p.y - p.rise * 20, p.w, p.h);
+    }
+    for (const p of world.pistons) {
+      ctx.fillStyle = "#ffd23f";
+      ctx.fillRect(p.cx - p.w / 2, p.y - p.h / 2 - 14, p.w, p.h);
+      ctx.strokeStyle = "#2a1b5e";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(p.cx - p.w / 2, p.y - p.h / 2 - 14, p.w, p.h);
+    }
+    for (const c of world.cannons) {
+      ctx.fillStyle = "#2a1b5e";
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 26, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = "#2a1b5e";
+      ctx.lineWidth = 18;
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(c.x + Math.cos(c.aim) * 44, c.y + Math.sin(c.aim) * 44);
+      ctx.stroke();
+    }
+    for (const m of world.meteors) {
+      if (m.t <= 0) continue;
+      ctx.strokeStyle = "rgba(255,51,85,0.85)";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, TAU);
+      ctx.stroke();
+    }
+    for (const m of world.movers) {
+      const x = m.cx - m.w / 2;
+      ctx.fillStyle = th.side;
+      roundRect(ctx, x, m.y + 8, m.w, m.h + 14, 14);
+      ctx.fill();
+      ctx.fillStyle = th.floorA;
+      roundRect(ctx, x, m.y, m.w, m.h, 14);
+      ctx.fill();
+      ctx.strokeStyle = "#ffb800";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+    for (const z of world.zones) {
+      if (!this._visible(z.x, z.y, z.w, z.h)) continue;
+      if (z.type === "ice") ctx.fillStyle = "rgba(190,235,255,0.6)";
+      else if (z.type === "conveyor") ctx.fillStyle = "rgba(90,74,122,0.55)";
+      else if (z.type === "gust") continue;
+      else ctx.fillStyle = z.active ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.06)";
+      ctx.fillRect(z.x, z.y, z.w, z.h);
+      if (z.type !== "ice") {
+        const len = Math.hypot(z.fx, z.fy) || 1, ux = z.fx / len, uy = z.fy / len;
+        const shift = ((world.clock * 60) % 60);
+        ctx.strokeStyle = z.type === "conveyor" ? "#ffd23f" : "rgba(255,255,255,0.8)";
+        ctx.lineWidth = 4;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(z.x, z.y, z.w, z.h);
+        ctx.clip();
+        for (let gx = z.x + 30; gx < z.x + z.w; gx += 60) {
+          for (let gy = z.y + 30; gy < z.y + z.h; gy += 60) {
+            const cx = gx + ux * shift, cy = gy + uy * shift;
+            ctx.beginPath();
+            ctx.moveTo(cx - ux * 10 - uy * 10, cy - uy * 10 + ux * 10);
+            ctx.lineTo(cx + ux * 8, cy + uy * 8);
+            ctx.lineTo(cx - ux * 10 + uy * 10, cy - uy * 10 - ux * 10);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+    for (const p of world.pads) {
+      ctx.fillStyle = `rgba(61,255,184,${0.7 + p.pulse * 0.3})`;
+      roundRect(ctx, p.x, p.y, p.w, p.h, 10);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  _drawBall(x, y, r, color, pivotX) {
+    const ctx = this.ctx;
+    if (pivotX != null) {
+      ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(pivotX, y - 140);
+      ctx.lineTo(x, y - r);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + 4, r, r * 0.5, 0, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y - r * 0.6, r, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 
@@ -436,21 +558,25 @@ export class Renderer {
     }
     if (b.crown) crown(ctx, cx, cy - r - 10 + Math.sin(world.clock * 3) * 2);
 
-    if (isFollowed && b.isHuman && !b.falling) {
-      const ty = cy - r - (b.crown ? 34 : 14) + Math.sin(world.clock * 5) * 2;
+    // Name over your own character, and over every person in multiplayer.
+    if (b.isHuman && !b.falling && (isFollowed || world.multiplayer)) {
+      const ty = cy - r - (b.crown ? 34 : 14) + (isFollowed ? Math.sin(world.clock * 5) * 2 : 0);
       ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.moveTo(cx - 7, ty - 10);
-      ctx.lineTo(cx + 7, ty - 10);
-      ctx.lineTo(cx, ty);
-      ctx.fill();
+      if (isFollowed) {
+        ctx.beginPath();
+        ctx.moveTo(cx - 7, ty - 10);
+        ctx.lineTo(cx + 7, ty - 10);
+        ctx.lineTo(cx, ty);
+        ctx.fill();
+      }
       ctx.font = "bold 13px 'Trebuchet MS', sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
       ctx.lineWidth = 4;
       ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeText(b.name, cx, ty - 12);
-      ctx.fillText(b.name, cx, ty - 12);
+      const nameY = isFollowed ? ty - 14 : ty;
+      ctx.strokeText(b.name, cx, nameY);
+      ctx.fillText(b.name, cx, nameY);
     }
   }
 
@@ -480,33 +606,55 @@ export class Renderer {
     ctx.globalAlpha = 1;
     this.particles = this.particles.filter((p) => p.life > 0);
   }
+}
 
-  _drawProgress(world, followId) {
-    const ctx = this.ctx, L = world.level;
-    const x = VIEW_W - 34, top = 90, bottom = VIEW_H - 40;
-    const start = L.spawn.y + L.spawn.h / 2, end = L.finish_y;
-    const toY = (y) => bottom - ((start - y) / (start - end)) * (bottom - top);
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    roundRect(ctx, x - 8, top - 14, 16, bottom - top + 28, 8);
+/** Vertical race-progress bar on the right edge (screen space, 960x600 units). */
+export function drawProgressBar(ctx, world, followId) {
+  const L = world.level;
+  if (!world.bodies.some((b) => b.isHuman)) return; // the menu's bot race doesn't need it
+  const x = VIEW_W - 34, top = 90, bottom = VIEW_H - 40;
+  const start = L.spawn.y + L.spawn.h / 2, end = L.finish_y;
+  const toY = (y) => bottom - ((start - y) / (start - end)) * (bottom - top);
+  ctx.fillStyle = "rgba(29,20,51,0.45)";
+  roundRect(ctx, x - 9, top - 16, 18, bottom - top + 32, 9);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(x - 9, top - 16, 18, 6);
+  // Labels so it reads as "race progress": a finish flag on top, START at the bottom.
+  ctx.font = "bold 10px 'Fredoka', 'Trebuchet MS', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(29,20,51,0.8)";
+  ctx.strokeText("\u{1F3C1} FINISH", x - 4, top - 19);
+  ctx.fillText("\u{1F3C1} FINISH", x - 4, top - 19);
+  ctx.textBaseline = "top";
+  ctx.strokeText("START", x, bottom + 18);
+  ctx.fillText("START", x, bottom + 18);
+  for (const cp of world.checkpoints) {
+    ctx.fillStyle = "#3c9cff";
+    ctx.fillRect(x - 9, toY(cp.y) - 1, 18, 2);
+  }
+  const bodies = world.bodies.slice().sort((a, b) => (a.id === followId) - (b.id === followId));
+  for (const b of bodies) {
+    const yy = Math.max(top - 10, Math.min(bottom, toY(b.finished ? end : b.y)));
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(x, yy, b.id === followId ? 7 : 4, 0, TAU);
     ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(x - 8, top - 14, 16, 6);
-    for (const cp of world.checkpoints) {
-      ctx.fillStyle = "#3c9cff";
-      ctx.fillRect(x - 8, toY(cp.y) - 1, 16, 2);
-    }
-    const bodies = world.bodies.slice().sort((a, b) => (a.id === followId) - (b.id === followId));
-    for (const b of bodies) {
-      const yy = Math.max(top - 10, Math.min(bottom, toY(b.finished ? end : b.y)));
-      ctx.fillStyle = b.color;
-      ctx.beginPath();
-      ctx.arc(x, yy, b.id === followId ? 7 : 4, 0, TAU);
-      ctx.fill();
-      if (b.id === followId) {
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+    if (b.id === followId) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.font = "bold 10px 'Fredoka', 'Trebuchet MS', sans-serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(29,20,51,0.8)";
+      const label = b.isHuman && world.human && b.id === world.human.id ? "YOU" : b.name.toUpperCase();
+      ctx.strokeText(label, x - 12, yy);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, x - 12, yy);
     }
   }
 }

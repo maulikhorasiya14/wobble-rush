@@ -8,7 +8,7 @@ const MOVE = {
 };
 const JUMP = new Set(["Space"]);
 const DIVE = new Set(["ShiftLeft", "ShiftRight", "KeyE"]);
-const BUFFER = 0.15;
+const BUFFER = 0.1;
 
 export class Input {
   constructor() {
@@ -30,6 +30,20 @@ export class Input {
       if (DIVE.has(e.code)) this.diveT = BUFFER;
     });
     window.addEventListener("keyup", (e) => this.down.delete(e.code));
+
+    // Mouse look: counts while the mouse is captured (pointer lock) or while
+    // dragging with a button held down.
+    this.lookX = 0;
+    this.lookY = 0;
+    this.wheel = 0;
+    window.addEventListener("mousemove", (e) => {
+      if (!this.enabled) return;
+      if (document.pointerLockElement || e.buttons) {
+        this.lookX += e.movementX || 0;
+        this.lookY += e.movementY || 0;
+      }
+    });
+    window.addEventListener("wheel", (e) => { if (this.enabled) this.wheel += e.deltaY; }, { passive: true });
     window.addEventListener("blur", () => this.down.clear());
   }
 
@@ -53,8 +67,16 @@ export class Input {
     return it;
   }
 
+  /** Mouse movement and wheel since the last call: [dx, dy, wheel]. */
+  takeLook() {
+    const out = [this.lookX, this.lookY, this.wheel];
+    this.lookX = this.lookY = this.wheel = 0;
+    return out;
+  }
+
   reset() {
     this.down.clear();
     this.jumpT = this.diveT = 0;
+    this.lookX = this.lookY = this.wheel = 0;
   }
 }

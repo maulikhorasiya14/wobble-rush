@@ -12,7 +12,9 @@ export class World {
    * @param level   level data from the server
    * @param physics physics constants from the server
    * @param roster  [{id, name, color, isHuman, skill}]
-   * @param opts    {qualify, countdown, tutorial}
+   * @param opts    {qualify, countdown, tutorial, localId, multiplayer}
+   *   localId:     which body this browser controls (defaults to the human)
+   *   multiplayer: several people play; set their moves in `intents`
    */
   constructor(level, physics, roster, opts = {}) {
     this.level = level;
@@ -20,6 +22,12 @@ export class World {
     this.R = physics.radius;
     this.type = level.type;
     this.tutorial = !!opts.tutorial;
+    this.multiplayer = !!opts.multiplayer;
+    this.intents = new Map(); // body id -> intent, for people playing from other browsers
+    // Multiplayer host: people's characters move in their own browsers, which
+    // report where they are; this World only runs the rules around them.
+    this.external = new Set(opts.external || []);
+    this.rollerId = 0;
     this.qualify = opts.qualify ?? roster.length;
     this.countdown = opts.countdown ?? 3;
     this.status = this.countdown > 0 ? "countdown" : "running";
@@ -37,6 +45,31 @@ export class World {
       ...s, cx: s.x + s.amp * Math.sin(s.phase || 0), vx: 0,
     }));
     this.bumpers = (level.bumpers || []).map((b) => ({ ...b, pulse: 0 }));
+    // Newer obstacle types (see levels.py): belts/ice/wind zones, bounce pads,
+    // swinging hammers, rolling balls and moving platforms.
+    this.zones = (level.zones || []).map((z) => ({ ...z, active: z.type !== "wind" }));
+    this.pads = (level.pads || []).map((p) => ({ ...p, pulse: 0 }));
+    this.pendulums = (level.pendulums || []).map((p) => {
+      const bx = p.x + p.amp * Math.sin(p.phase || 0);
+      return { ...p, bx, pbx: bx, vx: 0 };
+    });
+    this.movers = (level.movers || []).map((m) => {
+      const cx = m.x + m.amp * Math.sin(m.phase || 0);
+      return { ...m, cx, pcx: cx, dx: 0 };
+    });
+    this.rollerCfg = level.rollers || [];
+    this.rollerT = this.rollerCfg.map((_, i) => i * 0.3);
+    this.rollers = []; // every rolling/flying ball: {x, y, vx, vy, r, life}
+    this.discs = (level.discs || []).map((d) => ({ ...d, angle: 0, pangle: 0 }));
+    this.pistons = (level.pistons || []).map((p) => ({ ...p, cx: p.x0, pcx: p.x0, vx: 0, out: 0 }));
+    this.popups = (level.popups || []).map((p) => ({ ...p, rise: 0, up: false }));
+    this.cannons = (level.cannons || []).map((c) => {
+      const A = level.arena;
+      const x = A.x + Math.cos((c.angle * Math.PI) / 180) * c.dist, y = A.y + Math.sin((c.angle * Math.PI) / 180) * c.dist;
+      return { ...c, x, y, t: c.phase, aim: Math.atan2(A.y - y, A.x - x), flash: 0 };
+    });
+    this.meteors = []; // incoming strikes on Meteor Meadow: {x, y, r, t, T}
+    this.meteorT = level.tiles?.meteors?.start ?? 0;
     this.checkpoints = (level.checkpoints || []).slice().sort((a, b) => b.y - a.y);
     this.arenaR = level.arena ? level.arena.r : 0;
     this.tiles = level.tiles ? buildTiles(level.tiles) : null;
@@ -44,21 +77,25 @@ export class World {
 
     const spawns = this._spawnPoints(roster.length);
     this.bodies = roster.map((p, i) => this._makeBody(p, spawns[i]));
-    this.human = this.bodies.find((b) => b.isHuman) || null;
+    this.human = opts.localId !== undefined
+      ? this.bodies.find((b) => b.id === opts.localId) || null
+      : this.bodies.find((b) => b.isHuman) || null;
   }
 
   // ---------------------------------------------------------------- setup
 
   _makeBody(p, sp) {
-    const skill = p.skill ?? Math.random();
+    const skill = Math.min(p.skill ?? Math.random(), this.level.bot_skill_max ?? 1);
     return {
       id: p.id, name: p.name, color: p.color, isHuman: !!p.isHuman,
       x: sp.x, y: sp.y, vx: 0, vy: 0, z: 0, vz: 0,
       fx: 0, fy: -1, stun: 0, diving: false,
       falling: false, fallT: 0, finished: false, finishTime: 0, hideAt: 0,
-      eliminated: false, hidden: false, checkpoint: -1,
+      eliminated: false, hidden: false, checkpoint: -1, offFloorT: 0, onGround: true,
+      px: sp.x, py: sp.y, pz: 0,
       sliding: false, squash: 0, walk: Math.random() * 10, hitT: 0, crown: false,
-      speedMul: p.isHuman ? 1 : 0.84 + 0.16 * skill,
+      lives: p.isHuman ? (this.level.human_lives ?? 0) : 0,
+      speedMul: p.isHuman ? 1 : (0.84 + 0.16 * skill) * (this.level.bot_pace ?? 1),
       brain: p.isHuman ? null : makeBrain(skill),
     };
   }
@@ -68,7 +105,7 @@ export class World {
     const pts = [];
     if (this.type === "race") {
       const s = L.spawn;
-      const cols = Math.min(n, 6);
+      const cols = Math.min(n, n > 12 ? 7 : 6);
       const rows = Math.ceil(n / cols);
       for (let i = 0; i < n; i++) {
         const c = i % cols, r = Math.floor(i / cols);
@@ -76,12 +113,13 @@ export class World {
       }
       shuffle(pts);
     } else if (this.tiles) {
-      const cfg = this.tiles.cfg;
-      const cx = cfg.x + (cfg.cols * cfg.pitch) / 2, cy = cfg.y + (cfg.rows * cfg.pitch) / 2;
-      const rr = Math.min(cfg.cols, cfg.rows) * cfg.pitch * 0.3;
+      const T = this.tiles, cfg = T.cfg;
+      const rr = (cfg.radius || Math.min(cfg.cols, cfg.rows) * cfg.pitch / 2) * 0.55;
       for (let i = 0; i < n; i++) {
         const a = (i / n) * TAU;
-        const t = this.tileAt(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+        const px = T.cx + Math.cos(a) * rr, py = T.cy + Math.sin(a) * rr;
+        let t = this.tileAt(px, py);
+        if (!t) t = T.list.reduce((m, q) => (Math.hypot(q.x - px, q.y - py) < Math.hypot(m.x - px, m.y - py) ? q : m));
         pts.push({ x: t.x, y: t.y });
       }
     } else if (L.arena) {
@@ -96,9 +134,14 @@ export class World {
 
   // ---------------------------------------------------------------- queries
 
-  onFloor(x, y) {
+  onFloor(x, y, ahead = 0) {
     for (const f of this.level.floors || []) {
       if (x >= f.x && x <= f.x + f.w && y >= f.y && y <= f.y + f.h) return true;
+    }
+    if (this.moverAt(x, y, ahead)) return true;
+    for (const d of this.discs) {
+      const dx = x - d.x, dy = y - d.y;
+      if (dx * dx + dy * dy <= d.r * d.r) return true;
     }
     const A = this.level.arena;
     if (A) {
@@ -112,19 +155,50 @@ export class World {
     return false;
   }
 
+  /** The moving platform under (x, y), `ahead` seconds from now. */
+  moverAt(x, y, ahead = 0) {
+    for (const m of this.movers) {
+      const cx = ahead ? m.x + m.amp * Math.sin((this.time + ahead) * m.speed + (m.phase || 0)) : m.cx;
+      if (Math.abs(x - cx) <= m.w / 2 && y >= m.y && y <= m.y + m.h) return m;
+    }
+    return null;
+  }
+
+  padAt(x, y) {
+    for (const p of this.pads) if (x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h) return p;
+    return null;
+  }
+
   /** Floor that will still be there `ahead` seconds from now (crumbling tiles may not be). */
   safeAt(x, y, ahead = 0) {
-    if (!this.onFloor(x, y)) return false;
+    if (!this.onFloor(x, y, ahead)) return false;
     if (!this.tiles || (this.level.floors || []).length) return true;
     const t = this.tileAt(x, y);
     return !!t && (t.state === "solid" || t.t > ahead + 0.15);
   }
 
   tileAt(x, y) {
-    const cfg = this.tiles.cfg;
-    const c = Math.floor((x - cfg.x) / cfg.pitch), r = Math.floor((y - cfg.y) / cfg.pitch);
-    if (c < 0 || r < 0 || c >= cfg.cols || r >= cfg.rows) return null;
-    return this.tiles.list[r * cfg.cols + c];
+    const T = this.tiles, cfg = T.cfg;
+    const at = (c, r) => (c < 0 || r < 0 || c >= cfg.cols || r >= cfg.rows ? null : T.grid[r * cfg.cols + c]);
+    if (!T.hex) {
+      return at(Math.floor((x - cfg.x) / cfg.pitch), Math.floor((y - cfg.y) / cfg.pitch));
+    }
+    // Hex grid: find the nearest centre, then check the point is inside that hexagon.
+    const r0 = Math.floor((y - cfg.y) / T.rowH);
+    let best = null, bestD = Infinity, bc = 0, br = 0;
+    for (let r = r0 - 1; r <= r0 + 1; r++) {
+      const shift = r % 2 ? 0.5 : 0;
+      const c0 = Math.round((x - cfg.x) / cfg.pitch - 0.5 - shift);
+      for (let c = c0 - 1; c <= c0 + 1; c++) {
+        const p = T.centre(c, r);
+        const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+        if (d < bestD) { bestD = d; bc = c; br = r; best = p; }
+      }
+    }
+    const R = cfg.pitch / Math.sqrt(3); // circumradius
+    const dx = Math.abs(x - best.x), dy = Math.abs(y - best.y);
+    if (dx > cfg.pitch / 2 || dy > R - dx / Math.sqrt(3)) return null;
+    return at(bc, br);
   }
 
   /** Is (x, y) inside a tall obstacle, now or `ahead` seconds from now? */
@@ -138,7 +212,38 @@ export class World {
       const dx = x - b.x, dy = y - b.y, rr = b.r + R;
       if (dx * dx + dy * dy < rr * rr) return true;
     }
+    for (const p of this.pendulums) {
+      const bx = p.x + p.amp * Math.sin((this.time + ahead) * p.speed + (p.phase || 0));
+      const dx = x - bx, dy = y - p.y, rr = p.r + R + 10;
+      if (dx * dx + dy * dy < rr * rr) return true;
+    }
+    for (const r of this.rollers) {
+      const dx = x - (r.x + r.vx * ahead), dy = y - (r.y + r.vy * ahead), rr = r.r + R + 10;
+      if (dx * dx + dy * dy < rr * rr) return true;
+    }
+    for (const p of this.pistons) {
+      const cx = this._pistonX(p, this.time + ahead);
+      if (Math.abs(x - cx) < p.w / 2 + R && Math.abs(y - p.y) < p.h / 2 + R) return true;
+    }
+    for (const p of this.popups) {
+      if (this._popupUp(p, this.time + ahead) && x > p.x - R && x < p.x + p.w + R && y > p.y - R && y < p.y + p.h + R) return true;
+    }
     return false;
+  }
+
+  /** Piston block centre at time t: punch out fast, hold, pull back slowly, rest. */
+  _pistonX(p, t) {
+    const u = ((((t + p.phase) % p.period) + p.period) % p.period) / p.period;
+    let e;
+    if (u < 0.12) e = Math.sin((u / 0.12) * Math.PI / 2);
+    else if (u < 0.4) e = 1;
+    else if (u < 0.8) e = 1 - (u - 0.4) / 0.4;
+    else e = 0;
+    return p.x0 + p.dir * p.reach * e;
+  }
+
+  _popupUp(p, t) {
+    return ((((t + p.phase) % p.period) + p.period) % p.period) < p.period * p.duty;
   }
 
   aliveBodies() {
@@ -149,6 +254,10 @@ export class World {
 
   update(dt, humanIntent = NO_INTENT) {
     this.clock += dt;
+    // Remember where everything was so the renderer can interpolate between steps.
+    for (const b of this.bodies) { b.px = b.x; b.py = b.y; b.pz = b.z; }
+    for (const s of this.spinners) s.pangle = s.angle;
+    for (const w of this.sliders) w.pcx = w.cx;
     for (const b of this.bodies) b.squash = Math.max(0, b.squash - dt * 4);
 
     if (this.status === "countdown") {
@@ -163,17 +272,21 @@ export class World {
 
     this._updateObstacles(dt);
     for (const b of this.bodies) {
-      if (b.eliminated || b.hidden) continue;
+      if (b.eliminated || b.hidden || this.external.has(b.id)) continue;
       let it = NO_INTENT;
       if (this.status === "running" && !b.finished) {
-        it = b.isHuman ? humanIntent : botIntent(b, this, dt);
+        if (!b.isHuman) it = botIntent(b, this, dt);
+        else if (b === this.human) it = humanIntent;
+        else it = this.intents.get(b.id) || NO_INTENT;
       }
+      this._applyZones(b, dt);
       this._control(b, it, dt);
       this._integrate(b, dt);
+      this._checkPad(b);
     }
     this._collideObstacles();
     this._collideBodies();
-    for (const b of this.bodies) this._floorCheck(b);
+    for (const b of this.bodies) if (!this.external.has(b.id)) this._floorCheck(b, dt);
     if (this.tiles) this._updateTiles(dt);
     if (this.status === "running") this._rules();
   }
@@ -197,6 +310,127 @@ export class World {
       w.cx = nx;
     }
     for (const b of this.bumpers) b.pulse = Math.max(0, b.pulse - dt * 3);
+    for (const p of this.pads) p.pulse = Math.max(0, p.pulse - dt * 3);
+
+    // Moving platforms carry whoever is standing on them.
+    if (this.movers.length) {
+      const riders = [];
+      for (const b of this._active()) {
+        if (b.z <= 0 && !this.external.has(b.id)) { const m = this.moverAt(b.x, b.y); if (m) riders.push([b, m]); }
+      }
+      for (const m of this.movers) {
+        m.pcx = m.cx;
+        m.cx = m.x + m.amp * Math.sin(this.time * m.speed + (m.phase || 0));
+        m.dx = m.cx - m.pcx;
+      }
+      for (const [b, m] of riders) { b.x += m.dx; b.px += m.dx; }
+    }
+    for (const p of this.pendulums) {
+      p.pbx = p.bx;
+      p.bx = p.x + p.amp * Math.sin(this.time * p.speed + (p.phase || 0));
+      p.vx = (p.bx - p.pbx) / dt;
+    }
+    // Rolling balls: spawn at the top of their lane and roll down toward the start.
+    this.rollerCfg.forEach((c, i) => {
+      this.rollerT[i] -= dt;
+      if (this.rollerT[i] <= 0) {
+        this.rollerT[i] = c.every * (0.7 + Math.random() * 0.6);
+        const x = rand(c.x0, c.x1);
+        this.rollers.push({ x, y: c.y0, px: x, py: c.y0, vx: 0, vy: c.speed, r: c.r, rot: 0,
+          life: (c.y1 - c.y0) / c.speed, id: ++this.rollerId });
+      }
+    });
+    for (const r of this.rollers) {
+      r.px = r.x; r.py = r.y;
+      r.x += r.vx * dt;
+      r.y += r.vy * dt;
+      r.rot += (Math.hypot(r.vx, r.vy) * dt) / r.r;
+      r.life -= dt;
+    }
+    this.rollers = this.rollers.filter((r) => r.life > 0);
+    // Cannons fire across the arena, faster as the round goes on.
+    for (const c of this.cannons) {
+      c.flash = Math.max(0, c.flash - dt * 3);
+      c.t -= dt;
+      if (c.t <= 0) {
+        c.t = c.every * Math.max(0.4, 1 - (this.level.cannon_ramp || 0) * this.time) * (0.8 + Math.random() * 0.4);
+        const A = this.level.arena;
+        const tx = A.x + (Math.random() - 0.5) * 2 * c.spread, ty = A.y + (Math.random() - 0.5) * 2 * c.spread;
+        c.aim = Math.atan2(ty - c.y, tx - c.x);
+        const ux = Math.cos(c.aim), uy = Math.sin(c.aim);
+        this.rollers.push({ x: c.x + ux * 40, y: c.y + uy * 40, px: c.x, py: c.y, vx: ux * c.speed, vy: uy * c.speed,
+          r: c.r, rot: 0, life: (c.dist * 2 + 100) / c.speed, push: c.push ?? 1, id: ++this.rollerId });
+        c.flash = 1;
+        this.events.push({ type: "cannon", x: c.x, y: c.y });
+      }
+    }
+    // Spinning discs carry whoever stands on them round with them.
+    for (const d of this.discs) {
+      d.pangle = d.angle;
+      const da = d.speed * dt;
+      d.angle += da;
+      const c = Math.cos(da), sn = Math.sin(da);
+      for (const b of this._active()) {
+        if (b.z > 0 || this.external.has(b.id)) continue;
+        const rx = b.x - d.x, ry = b.y - d.y;
+        if (rx * rx + ry * ry > d.r * d.r) continue;
+        const nx = d.x + rx * c - ry * sn, ny = d.y + rx * sn + ry * c;
+        b.px += nx - b.x; b.py += ny - b.y;
+        b.x = nx; b.y = ny;
+      }
+    }
+    for (const p of this.pistons) {
+      p.pcx = p.cx;
+      p.cx = this._pistonX(p, this.time);
+      p.vx = (p.cx - p.pcx) / dt;
+    }
+    for (const p of this.popups) {
+      p.up = this._popupUp(p, this.time);
+      p.rise = Math.max(0, Math.min(1, p.rise + (p.up ? dt : -dt) * 5));
+    }
+    for (const z of this.zones) {
+      if (z.type === "wind") z.active = ((this.time + (z.phase || 0)) % z.period) < z.period * z.duty;
+      if (z.type === "gust") {
+        const cycle = Math.floor((this.time + z.phase) / z.period);
+        const into = (this.time + z.phase) - cycle * z.period;
+        const ang = cycle * 2.39996 + 0.7; // a new direction every cycle
+        const str = Math.min(z.max, z.base + z.ramp * this.time);
+        z.angle = ang;
+        z.active = into >= z.calm && this.status === "running";
+        z.fx = Math.cos(ang) * str;
+        z.fy = Math.sin(ang) * str;
+      }
+    }
+  }
+
+  /** Belts and wind push you along; ice makes you slide. */
+  _applyZones(b, dt) {
+    b.onIce = false;
+    if (!this.zones.length || b.falling) return;
+    for (const z of this.zones) {
+      if (b.x < z.x || b.x > z.x + z.w || b.y < z.y || b.y > z.y + z.h) continue;
+      if (z.type === "ice") { if (b.z <= 0) b.onIce = true; }
+      else if ((z.type === "conveyor" && b.z <= 0) || ((z.type === "wind" || z.type === "gust") && z.active)) {
+        b.x += z.fx * dt;
+        b.y += z.fy * dt;
+      }
+    }
+  }
+
+  /** Bounce pads launch you up and across. */
+  _checkPad(b) {
+    if (!this.pads.length || b.falling || b.z > 0 || b.eliminated || b.hidden) return;
+    const p = this.padAt(b.x, b.y);
+    if (!p) return;
+    b.vx = p.dx * p.speed;
+    b.vy = p.dy * p.speed;
+    b.vz = p.vz;
+    b.z = 0.01;
+    b.ballistic = true; // no steering mid-flight, so every launch lands
+    b.diving = false;
+    b.stun = 0;
+    p.pulse = 1;
+    this.events.push({ type: "pad", id: b.id, x: b.x, y: b.y });
   }
 
   _control(b, it, dt) {
@@ -207,6 +441,7 @@ export class World {
     b.hitT = Math.max(0, b.hitT - dt);
 
     if (b.stun <= 0) b.sliding = false;
+    if (b.ballistic && b.z > 0) return; // riding a bounce-pad launch
     if (b.stun <= 0 && !b.diving) {
       let mx = it.mx || 0, my = it.my || 0;
       const m = Math.hypot(mx, my);
@@ -214,12 +449,16 @@ export class World {
       const maxS = P.max_speed * b.speedMul;
       const tx = mx * maxS, ty = my * maxS;
       if (ground || m > 0.05) {
-        const acc = (ground ? P.ground_accel : P.air_accel) * dt;
+        const acc = (ground ? P.ground_accel * (b.onIce ? 0.2 : 1) : P.air_accel) * dt;
         const dx = tx - b.vx, dy = ty - b.vy, d = Math.hypot(dx, dy);
         if (d <= acc) { b.vx = tx; b.vy = ty; } else { b.vx += (dx / d) * acc; b.vy += (dy / d) * acc; }
       }
       if (m > 0.05) { b.fx = mx / Math.max(m, 1e-6); b.fy = my / Math.max(m, 1e-6); }
 
+      // A jump press in mid-air is dropped unless it comes right before landing
+      // (low and falling). Otherwise the buffered press would fire a surprise
+      // second jump the moment you touch down.
+      if (it.jump && !ground && (b.vz > 0 || b.z > 18)) it.usedJump = true;
       if (it.jump && ground) {
         b.vz = P.jump_speed;
         b.z = 0.01;
@@ -235,7 +474,7 @@ export class World {
         this.events.push({ type: "dive", id: b.id, x: b.x, y: b.y });
       }
     } else if (ground) {
-      const k = Math.exp(-(b.sliding ? P.slide_friction : P.ground_friction * 0.6) * dt);
+      const k = Math.exp(-(b.sliding ? P.slide_friction : P.ground_friction * 0.6) * (b.onIce ? 0.25 : 1) * dt);
       b.vx *= k;
       b.vy *= k;
     }
@@ -262,6 +501,7 @@ export class World {
         b.z = 0;
         b.vz = 0;
         b.squash = Math.min(1, impact / 420);
+        b.ballistic = false;
         if (b.diving) {
           b.diving = false;
           b.sliding = true;
@@ -274,9 +514,15 @@ export class World {
     if (b.z <= 0 && sp > 20) b.walk += dt * sp * 0.06;
   }
 
-  _floorCheck(b) {
-    if (b.falling || b.eliminated || b.hidden || b.z > 0) return;
-    if (!this.onFloor(b.x, b.y)) {
+  _floorCheck(b, dt) {
+    if (b.falling || b.eliminated || b.hidden) return;
+    if (b.z > 0) { b.offFloorT = 0; b.onGround = false; return; }
+    if (this.onFloor(b.x, b.y)) { b.offFloorT = 0; b.onGround = true; return; }
+    // Coyote time: a moment of grace after running off an edge (not after
+    // landing on thin air, which would allow a second jump over a pit).
+    b.offFloorT += dt;
+    if (!b.onGround || b.offFloorT > (this.P.coyote_time || 0)) {
+      b.offFloorT = 0;
       b.falling = true;
       b.fallT = 0;
       b.diving = false;
@@ -299,16 +545,57 @@ export class World {
         b.y = rand(s.y, s.y + s.h);
       }
       b.z = 90; // drop back in from above
+      b.px = b.x; b.py = b.y; b.pz = b.z;
       b.stun = 0;
       b.fx = 0; b.fy = -1;
       this.events.push({ type: "respawn", id: b.id, x: b.x, y: b.y });
+    } else if (b.lives > 0) {
+      // Player assist: drop back in on a safe tile instead of being knocked out.
+      b.lives--;
+      const spot = this._safeSpot();
+      b.x = spot.x;
+      b.y = spot.y;
+      b.z = 90;
+      b.px = b.x; b.py = b.y; b.pz = b.z;
+      b.stun = 0;
+      this.events.push({ type: "respawn", id: b.id, x: b.x, y: b.y });
+      this.events.push({ type: "lifelost", id: b.id, lives: b.lives });
     } else {
-      b.eliminated = true;
-      b.z = 0;
-      b.aliveAfter = this.aliveBodies().length;
-      this.eliminatedOrder.push(b.id);
-      this.events.push({ type: "eliminated", id: b.id, name: b.name, x: b.x, y: b.y });
+      this.eliminate(b);
     }
+  }
+
+  /** Knock a player out of this round. */
+  eliminate(b) {
+    if (b.eliminated) return;
+    b.eliminated = true;
+    b.falling = false;
+    b.z = 0;
+    b.aliveAfter = this.aliveBodies().length;
+    this.eliminatedOrder.push(b.id);
+    this.events.push({ type: "eliminated", id: b.id, name: b.name, x: b.x, y: b.y });
+  }
+
+  /** The safest place to drop a player back in: a solid tile with solid neighbours, near the middle. */
+  _safeSpot() {
+    if (this.tiles) {
+      const T = this.tiles, p = T.cfg.pitch;
+      let best = null, bestScore = -Infinity;
+      for (const t of T.list) {
+        if (t.state !== "solid") continue;
+        let n = 0;
+        for (let k = 0; k < 6; k++) {
+          const o = this.tileAt(t.x + Math.cos((k * Math.PI) / 3) * p, t.y + Math.sin((k * Math.PI) / 3) * p);
+          if (o && o.state === "solid") n++;
+        }
+        const score = n - Math.hypot(t.x - T.cx, t.y - T.cy) / (p * 4);
+        if (score > bestScore) { bestScore = score; best = t; }
+      }
+      if (best) return { x: best.x, y: best.y };
+    }
+    const A = this.level.arena;
+    if (A) return { x: A.x, y: A.y + this.arenaR * 0.4 };
+    return { x: this.level.bounds.w / 2, y: this.level.bounds.h / 2 };
   }
 
   // ---------------------------------------------------------------- collisions
@@ -318,25 +605,56 @@ export class World {
   }
 
   _collideObstacles() {
+    for (const b of this._active()) if (!this.external.has(b.id)) this._collideOne(b);
+  }
+
+  _collideOne(b) {
     const P = this.P, R = this.R;
-    for (const b of this._active()) {
+    {
       for (const s of this.spinners) this._hitSpinner(b, s, P, R);
       for (const w of this.sliders) this._hitSlider(b, w, R);
+      for (const p of this.pendulums) this._hitBall(b, p.bx, p.y, p.r, p.vx, 0);
+      for (const r of this.rollers) this._hitBall(b, r.x, r.y, r.r, r.vx, r.vy, r.push ?? 1);
+      for (const p of this.pistons) this._hitSlider(b, p, R);
+      for (const p of this.popups) {
+        if (p.rise > 0.5) this._hitSlider(b, { cx: p.x + p.w / 2, y: p.y + p.h / 2, w: p.w, h: p.h, vx: 0 }, R);
+      }
       for (const bp of this.bumpers) {
         const dx = b.x - bp.x, dy = b.y - bp.y, d = Math.hypot(dx, dy), rr = bp.r + R;
         if (d < rr) {
           const nx = d > 1e-4 ? dx / d : 0, ny = d > 1e-4 ? dy / d : 1;
           b.x = bp.x + nx * rr;
           b.y = bp.y + ny * rr;
-          b.vx = nx * 480;
-          b.vy = ny * 480;
+          b.vx = nx * (bp.power || 480);
+          b.vy = ny * (bp.power || 480);
           b.diving = false;
           b.stun = Math.max(b.stun, 0.25);
           bp.pulse = 1;
-          this.events.push({ type: "bump", id: b.id, x: b.x, y: b.y });
+          this.events.push({ type: "bump", id: b.id, x: b.x, y: b.y, dx: nx, dy: ny });
         }
       }
     }
+  }
+
+  /** Swinging hammers and rolling balls: round, tall, and they knock you flying. */
+  _hitBall(b, bx, by, r, vx, vy, push = 1) {
+    const R = this.R;
+    const dx = b.x - bx, dy = b.y - by, d = Math.hypot(dx, dy), rr = r + R;
+    if (d >= rr) return;
+    const nx = d > 1e-4 ? dx / d : 0, ny = d > 1e-4 ? dy / d : 1;
+    b.x = bx + nx * rr;
+    b.y = by + ny * rr;
+    const kx = (nx * 280 + vx * 1.3) * push, ky = (ny * 280 + vy * 1.3) * push;
+    b.vx = kx;
+    b.vy = ky;
+    b.vz = 160;
+    b.z = Math.max(b.z, 0.01);
+    b.diving = false;
+    b.ballistic = false;
+    b.stun = 0.55;
+    b.hitT = 0.3;
+    const k = Math.hypot(kx, ky) || 1;
+    this.events.push({ type: "hit", id: b.id, x: b.x, y: b.y, dx: kx / k, dy: ky / k });
   }
 
   _hitSpinner(b, s, P, R) {
@@ -375,7 +693,7 @@ export class World {
         b.diving = false;
         b.stun = 0.5;
         b.hitT = 0.3;
-        this.events.push({ type: "hit", id: b.id, x: b.x, y: b.y });
+        this.events.push({ type: "hit", id: b.id, x: b.x, y: b.y, dx: tx, dy: ty });
       } else {
         const vn = b.vx * nx + b.vy * ny;
         if (vn < 0) { b.vx -= vn * nx; b.vy -= vn * ny; }
@@ -421,9 +739,13 @@ export class World {
         const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
         if (d2 >= minD * minD || Math.abs(a.z - b.z) > 28) continue;
         const d = Math.sqrt(d2) || 0.01;
-        const nx = dx / d, ny = dy / d, push = (minD - d) / 2;
-        a.x -= nx * push; a.y -= ny * push;
-        b.x += nx * push; b.y += ny * push;
+        const nx = dx / d, ny = dy / d;
+        // Characters moved by another browser don't get pushed here; they push others.
+        const ea = this.external.has(a.id), eb = this.external.has(b.id);
+        if (ea && eb) continue;
+        const pa = ea ? 0 : eb ? 1 : 0.5, pb = 1 - pa;
+        a.x -= nx * (minD - d) * pa; a.y -= ny * (minD - d) * pa;
+        b.x += nx * (minD - d) * pb; b.y += ny * (minD - d) * pb;
         const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
         if (rel < 0) {
           const imp = -rel * 0.5;
@@ -437,16 +759,105 @@ export class World {
     }
   }
 
+  // ---------------------------------------------------------------- multiplayer
+
+  /**
+   * Move this browser's own character one step (multiplayer). Everything
+   * else in this World is copied from the host; only this body is simulated
+   * here, so your own moves respond instantly.
+   */
+  stepLocal(b, it, dt) {
+    b.px = b.x; b.py = b.y; b.pz = b.z;
+    b.squash = Math.max(0, b.squash - dt * 4);
+    if (b.eliminated || b.hidden || this.status === "countdown") return;
+    const intent = this.status === "running" && !b.finished && it ? it : NO_INTENT;
+    this._applyZones(b, dt);
+    this._control(b, intent, dt);
+    this._integrate(b, dt);
+    this._checkPad(b);
+    if (!b.eliminated && !b.falling) {
+      this._collideOne(b);
+      this._pushAway(b);
+    }
+    this._floorCheck(b, dt);
+    if (this.type === "race" && this.status === "running" && !b.finished && !b.falling && !b.eliminated) {
+      for (let i = b.checkpoint + 1; i < this.checkpoints.length; i++) {
+        if (b.y < this.checkpoints[i].y) {
+          b.checkpoint = i;
+          this.events.push({ type: "checkpoint", id: b.id, x: b.x, y: b.y });
+        }
+      }
+      if (b.y < this.level.finish_y) {
+        b.finished = true; // the host confirms the place
+        b.finishTime = this.time;
+      }
+    }
+  }
+
+  /** Bump this body away from everyone else (they move in other browsers). */
+  _pushAway(b) {
+    const minD = this.R * 2;
+    for (const o of this.bodies) {
+      if (o === b || o.eliminated || o.hidden || o.falling) continue;
+      const dx = b.x - o.x, dy = b.y - o.y, d2 = dx * dx + dy * dy;
+      if (d2 >= minD * minD || Math.abs(o.z - b.z) > 28) continue;
+      const d = Math.sqrt(d2) || 0.01;
+      const nx = dx / d, ny = dy / d;
+      b.x += nx * (minD - d);
+      b.y += ny * (minD - d);
+      const rel = (b.vx - o.vx) * nx + (b.vy - o.vy) * ny;
+      if (rel < 0) { b.vx -= nx * rel * 0.5; b.vy -= ny * rel * 0.5; }
+      if (o.diving && !b.diving) { b.stun = Math.max(b.stun, 0.3); b.hitT = 0.2; }
+    }
+  }
+
   // ---------------------------------------------------------------- tiles
+
+  /** Meteor Meadow: mark target circles on the floor, then those tiles drop. */
+  _updateMeteors(dt, cfg) {
+    const M = cfg.meteors;
+    this.meteorT -= dt;
+    if (this.meteorT > 0) return;
+    this.meteorT = Math.max(M.every_min, M.every - M.ramp * this.time);
+    const count = Math.min(M.max_count, 1 + Math.floor(this.time / 25));
+    const solid = this.tiles.list.filter((t) => t.state === "solid");
+    const alive = this.aliveBodies();
+    for (let i = 0; i < count && solid.length; i++) {
+      // Half the strikes aim near a random player so nobody can just stand still.
+      let cx, cy;
+      if (alive.length && Math.random() < 0.5) {
+        const b = alive[Math.floor(Math.random() * alive.length)];
+        cx = b.x + rand(-60, 60); cy = b.y + rand(-60, 60);
+      } else {
+        const t = solid[Math.floor(Math.random() * solid.length)];
+        cx = t.x; cy = t.y;
+      }
+      for (const t of this.tiles.list) {
+        if (t.state === "solid" && Math.hypot(t.x - cx, t.y - cy) <= M.radius) {
+          t.state = "crack";
+          t.t = t.max = M.warn;
+        }
+      }
+      this.meteors.push({ x: cx, y: cy, r: M.radius, t: M.warn, T: M.warn });
+    }
+  }
 
   _updateTiles(dt) {
     const cfg = this.tiles.cfg;
-    if (this.status === "running") {
+    if (this.status === "running" && cfg.meteors) this._updateMeteors(dt, cfg);
+    for (const m of this.meteors) m.t -= dt;
+    this.meteors = this.meteors.filter((m) => m.t > -0.6);
+    if (this.status === "running" && cfg.touch_crumble !== false) {
       for (const b of this._active()) {
         if (b.z > 0) continue;
         const t = this.tileAt(b.x, b.y);
-        if (t && t.state === "solid") { t.state = "crack"; t.t = cfg.crack_time; }
+        if (t && t.state === "solid") {
+          t.state = "crack";
+          t.t = t.max = b.isHuman ? (cfg.human_crack_time ?? cfg.crack_time) : cfg.crack_time;
+        }
       }
+    }
+    if (this.status === "running") {
       if (this.time > cfg.auto_crack_after) {
         this.autoCrackT -= dt;
         if (this.autoCrackT <= 0) {
@@ -455,7 +866,7 @@ export class World {
           if (solid.length) {
             const t = solid[Math.floor(Math.random() * solid.length)];
             t.state = "crack";
-            t.t = cfg.crack_time * 1.5;
+            t.t = t.max = cfg.crack_time * 1.5;
           }
         }
       }
@@ -500,12 +911,21 @@ export class World {
         if (this.human && this.human.finished) this._end("finished");
       } else if (this.finishers.length >= this.qualify) {
         this._end("full");
+      } else if (this.multiplayer && !this.bodies.some((b) => b.isHuman && !b.eliminated)) {
+        this._end("eliminated"); // every person has left the race
       } else if (L.time_limit && this.time >= L.time_limit) {
         this._end("time");
       }
       return;
     }
     const alive = this.aliveBodies();
+    if (this.multiplayer) {
+      // Keep going while any person is still in; end once nobody is left to watch for.
+      if (!alive.some((b) => b.isHuman)) this._end("eliminated");
+      else if (alive.length <= this.qualify) this._end("survivors");
+      else if (L.time_limit && this.time >= L.time_limit) this._end("time");
+      return;
+    }
     if (this.human && this.human.eliminated) this._end("eliminated");
     else if (alive.length <= this.qualify) this._end("survivors");
     else if (L.time_limit && this.time >= L.time_limit) this._end("time");
@@ -517,41 +937,72 @@ export class World {
     if (this.type === "race") qualified = this.finishers.slice(0, this.qualify);
     else qualified = this.aliveBodies().map((b) => b.id);
 
-    const h = this.human;
-    let place = null, time = this.time, playerQualified = false;
-    if (h) {
-      playerQualified = qualified.includes(h.id);
-      if (this.type === "race") {
-        const idx = this.finishers.indexOf(h.id);
-        place = idx >= 0 ? idx + 1 : null;
-        if (h.finished) time = h.finishTime;
-      } else if (playerQualified) {
-        place = this.qualify === 1 ? 1 : null;
-      } else {
-        place = (h.aliveAfter ?? 0) + 1;
-      }
-      if (playerQualified && this.qualify === 1) h.crown = true;
-    }
-    if (!h && this.qualify === 1 && qualified.length === 1) {
+    if (this.qualify === 1 && qualified.length === 1) {
       this.bodies.find((b) => b.id === qualified[0]).crown = true;
     }
-    this.result = { reason, qualified, playerQualified, place, time: Math.round(time * 100) / 100 };
+    // Result for every person in the round (multiplayer needs them all).
+    const players = {};
+    for (const b of this.bodies) if (b.isHuman) players[b.id] = this._resultFor(b, qualified);
+    const mine = this.human ? players[this.human.id] : { qualified: false, place: null, time: this.time };
+    this.result = {
+      reason, qualified, players,
+      playerQualified: mine.qualified, place: mine.place, time: mine.time,
+    };
     this.events.push({ type: "end", reason });
+  }
+
+  _resultFor(b, qualified) {
+    let place = null, time = this.time;
+    const ok = qualified.includes(b.id);
+    if (this.type === "race") {
+      const idx = this.finishers.indexOf(b.id);
+      place = idx >= 0 ? idx + 1 : null;
+      if (b.finished) time = b.finishTime;
+    } else if (ok) {
+      place = this.qualify === 1 ? 1 : null;
+    } else {
+      place = (b.aliveAfter ?? 0) + 1;
+    }
+    return { qualified: ok, place, time: Math.round(time * 100) / 100 };
+  }
+
+  /** A person left a multiplayer round: take them out of it. */
+  dropPlayer(id) {
+    const b = this.bodies.find((q) => q.id === id);
+    if (!b || b.eliminated || b.finished) return;
+    b.eliminated = true;
+    b.hidden = true;
+    b.falling = false;
+    b.aliveAfter = this.aliveBodies().length;
+    this.eliminatedOrder.push(b.id);
+    this.events.push({ type: "left", id: b.id, name: b.name, x: b.x, y: b.y });
   }
 }
 
+const HEX_ROW = Math.sqrt(3) / 2; // row spacing of pointy-top hexes, as a fraction of pitch
+
 function buildTiles(cfg) {
+  const hex = cfg.shape === "hex";
+  const rowH = hex ? cfg.pitch * HEX_ROW : cfg.pitch;
+  const centre = (c, r) => ({
+    x: cfg.x + cfg.pitch * (c + 0.5 + (hex && r % 2 ? 0.5 : 0)),
+    y: cfg.y + rowH * (r + 0.5),
+  });
+  const cx = cfg.x + (cfg.cols * cfg.pitch) / 2 + (hex ? cfg.pitch / 4 : 0);
+  const cy = cfg.y + (cfg.rows * rowH) / 2;
+  const grid = new Array(cfg.cols * cfg.rows).fill(null);
   const list = [];
   for (let r = 0; r < cfg.rows; r++) {
     for (let c = 0; c < cfg.cols; c++) {
-      list.push({
-        c, r, state: "solid", t: 0, goneT: 0,
-        x: cfg.x + (c + 0.5) * cfg.pitch,
-        y: cfg.y + (r + 0.5) * cfg.pitch,
-      });
+      const p = centre(c, r);
+      const dist = Math.hypot(p.x - cx, p.y - cy);
+      if (cfg.radius && dist > cfg.radius) continue;
+      const t = { c, r, x: p.x, y: p.y, state: "solid", t: 0, goneT: 0, ring: Math.round(dist / cfg.pitch) };
+      grid[r * cfg.cols + c] = t;
+      list.push(t);
     }
   }
-  return { cfg, list };
+  return { cfg, list, grid, hex, rowH, cx, cy, centre };
 }
 
 function shuffle(arr) {

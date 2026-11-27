@@ -15,10 +15,11 @@ in-game **Tutorial**. It takes about a minute.
    ```
 2. Your browser opens **http://127.0.0.1:5000**. If it doesn't, open that address yourself.
 3. On the main menu, type your **name** and pick a **colour** for your character.
-4. Click **Play show**. The first time you do this, the game offers the **tutorial**.
+4. Click **PLAY**. The first time you do this, the game offers the **tutorial**.
    We strongly recommend taking it.
 
 Everything runs on your own computer. No internet connection or account is needed.
+To play with friends, press **Multiplayer** instead (see section 3b).
 
 ---
 
@@ -29,8 +30,25 @@ Everything runs on your own computer. No internet connection or account is neede
 | `W` `A` `S` `D` or arrow keys | Move (you can move diagonally)                         |
 | `Space`                      | Jump                                                     |
 | `Shift` or `E`               | Dive: a fast forward lunge. Works on the ground or in mid-air |
-| `Esc` or `P`                 | Pause (Resume / Quit to menu)                            |
+| `Esc` or `P`                 | Pause (Resume / Quit to menu). On a round card: quit the show |
 | `Space` or `Enter`           | Confirm on round intro and result screens               |
+
+**Camera (3D view)**
+
+The camera orbits freely around your character, all the way round (360°):
+
+| Input | What it does |
+|-------|--------------|
+| Move the mouse left / right | Swing the camera around your character |
+| Move the mouse up / down | Tilt the camera higher or lower |
+| Mouse wheel | Zoom in / out |
+| Click the game | Capture the mouse for camera control (happens automatically when a round starts) |
+| `Esc` | Release the mouse and pause |
+
+Movement is relative to the camera: `W` always runs away from the camera (into the
+screen), `S` toward it, `A` / `D` to the camera's left and right. If you'd rather not
+capture the mouse, hold a mouse button and drag to turn the camera instead. In the
+classic 2D view the camera is fixed.
 
 **Movement tips**
 
@@ -40,31 +58,82 @@ Everything runs on your own computer. No internet connection or account is neede
 - **Jump + Dive** is your longest move. Jump, then press `Shift` near the top of the
   jump to fly much further than a jump alone.
 - Pressing `Space` a split second before you land still counts, so you can chain hops.
+- Ran off an edge by accident? You still have a split second to jump after leaving the
+  floor.
 
 ---
 
 ## 3. How a show works
 
-A **show** is three rounds against 11 computer-controlled players (12 in total).
-After each round, the players who didn't qualify are knocked out:
+On the main menu, pick how many rounds you want: **3, 4 or 5**. Each show then picks
+its rounds at random, like a TV game show running order. Every round has slots it
+can appear in:
 
-| Round | Name        | Type     | Players | Who moves on                    |
-|-------|-------------|----------|---------|---------------------------------|
-| 1     | Spin Sprint | Race     | 12      | First **8** across the finish   |
-| 2     | Tile Panic  | Survival | 8       | Last **4** still standing       |
-| 3     | Spin Arena  | Final    | 4       | Last **1** standing wins the crown |
+| Slot | Rounds |
+|------|--------|
+| **Round 1** (opener) | Spin Sprint, Conveyor Canyon, Bounce Bay, Hammer Hall, Piston Pass |
+| **Middle rounds** | Any opener race, plus Turntable Trail, Frosty Slopes, Drift Lifts, Gusty Gorge, and the survival rounds Tile Panic, Meteor Meadow and Blizzard Bluff (at most one survival round, two in a 5-round show) |
+| **Final** | Spin Arena, Cannon Clash or Pinball Pit, picked at random |
+
+No round repeats within a show.
+
+You start with 11 computer players (12 in total). After each round, the players who
+didn't qualify are knocked out:
+
+| Show length | Players left after each round |
+|-------------|-------------------------------|
+| 3 rounds    | 8 → 4 → 1 winner              |
+| 4 rounds    | 9 → 6 → 3 → 1 winner          |
+| 5 rounds    | 10 → 8 → 6 → 3 → 1 winner     |
+
+During a round, the counter at the top shows how many spots are filled (races) or how
+many players are left (survival), the row of icons under it shows every contestant,
+and a feed on the left announces who qualifies or gets knocked out.
 
 If you're eliminated, the show ends and your score is saved. Win the final to earn a
-**crown**.
+**crown**. Before each round, an intro card explains the goal and shows your personal
+best on that round. A **3-2-1-GO!** countdown starts the action.
 
-Before each round, an intro card explains the goal and shows your personal best on
-that level. A **3-2-1-GO!** countdown starts the action.
+---
+
+## 3b. Multiplayer: play with friends
+
+Up to **20 people** can play the same show.
+
+1. One person runs the game (`python run.py`); everyone opens the game in their browser.
+2. Press **Multiplayer**, type your name and press **Create room**. You get a
+   **4-letter room code** and become the host.
+3. Friends press **Multiplayer**, type the code and press **Join**.
+4. The host picks the number of rounds (1–5) and whether to fill empty spots with
+   **bots** ("Fill to 12" — the default — "Fill to 20" or "Off"), then presses **Start show**.
+
+A show needs at least one more player than it has rounds (2 players: 1 round,
+3 players: 2 rounds, and so on), so someone is knocked out every round. How many
+qualify scales with the number of players, for example with 20 players:
+
+| Show length | Players left after each round |
+|-------------|-------------------------------|
+| 3 rounds    | 20 → 13 → 7 → 1 winner        |
+| 5 rounds    | 20 → 17 → 13 → 10 → 5 → 1 winner |
+
+Good to know:
+
+- Rounds start by themselves after a short intro, and the game **never pauses** in
+  multiplayer. `Esc` opens a menu (to leave the room) while the round keeps going.
+- Finished the race or knocked out? You can **keep watching**. Press `←` / `→` to
+  switch who the camera follows.
+- Your own character always responds instantly; other players are shown a split
+  second behind so they move smoothly. The host's browser runs the bots and
+  obstacles in the background, so the host can even switch tabs. If the host
+  leaves, the next player becomes host and the current round restarts.
+- People who join while a show is running watch it and play in the next one.
+- Everyone's score, crowns and personal bests are saved to their **own** profile.
 
 ---
 
 ## 4. The rounds
 
-### Round 1: Spin Sprint (race)
+### Spin Sprint (race)
 
 Run from the bottom of the course to the **FINISH** arch at the top.
 The bar on the right edge of the screen shows everyone's progress (your dot is the
@@ -87,19 +156,64 @@ at the last checkpoint you crossed.
 
 Once you qualify, the game fast-forwards until the other spots are filled.
 
-### Round 2: Tile Panic (survival)
+You have time to recover from mistakes: a clean run takes about 20 seconds, while the
+8 spots usually take 45–70 seconds to fill. Falling only sends you back to the last
+checkpoint, so keep going.
 
-The floor is a grid of tiles. **Every tile you touch starts to crumble.** It turns
-orange, shakes, and disappears about a second later. Fall through a hole and you're out.
+### More races
 
-- Don't stand still: your own tile is crumbling under you.
-- Don't sprint everywhere either: every tile you run over is one fewer for later.
-  Short hops from tile to tile last longest.
+Every race works the same way (reach the finish before the spots fill up, checkpoints
+save your progress), but each adds its own obstacle:
+
+- **Conveyor Canyon**: conveyor belts. Pick the lane whose arrows point toward the
+  finish, push against the sideways belts, then ride the express belt along the bridge.
+- **Bounce Bay**: gaps far too wide to jump. Run onto a glowing **bounce pad** and it
+  throws you across. You can't steer mid-flight, so line up first.
+- **Frosty Slopes**: **ice** makes you slide (it's hard to stop or turn), and giant
+  **snowballs** roll down toward you. Dodge them or get bowled over.
+- **Hammer Hall**: big **hammers** swing across a narrow walkway. Wait for a hammer
+  to pass, then run.
+- **Drift Lifts**: **moving platforms** over the sea. Wait at the edge until the next
+  platform slides in front of you, then jump. You ride along while standing on one.
+- **Gusty Gorge**: **gusts of wind** switch on and off (the fans spin fast and white
+  streaks blow past). Lean into the wind or wait for it to stop.
+- **Turntable Trail**: a chain of **spinning discs**. Standing on one carries you
+  round, so aim ahead of where you want to go and jump when the next disc is close.
+- **Piston Pass**: **pistons** punch out of the corridor walls, and orange blocks pop
+  up out of the floor. Watch the rhythm and slip through the gaps.
+
+### More survival rounds
+
+- **Meteor Meadow**: red target circles light up on the meadow, and a glowing meteor
+  smashes those tiles away about 2 seconds later. Step off any red tiles. Strikes
+  get more frequent over time. You have **1 extra life**.
+- **Blizzard Bluff**: gusts that change direction every few seconds (watch the
+  arrows on the snow) and snowballs rolling across the bluff. Lean into the wind,
+  stay away from the edge. You have **1 extra life**.
+
+### More finals
+
+- **Cannon Clash**: six cannons around the arena fire giant balls across it, faster
+  and faster, while the arena shrinks. Dodge or jump them.
+- **Pinball Pit**: super-bouncy bumpers fling you hard, and two spinning bars speed
+  up over time. The arena shrinks. Last one standing wins.
+
+### Tile Panic (survival)
+
+A round arena of large hexagonal tiles. **Every tile you touch starts to crumble**: it
+turns orange, shakes and drops away. Tiles you step on last about **1.4 seconds**;
+the computer players' tiles drop after 0.75 seconds.
+
+**You have 2 extra lives** in this round (the hearts next to the counter). Fall
+through and you drop back in on a safe tile; fall a third time and you're out.
+
+- Keep hopping from tile to tile: the one under you is always crumbling.
+- Each tile is wide, so start moving as soon as you land.
 - Holes can be **jumped**. Make sure the tile you land on isn't already orange.
-- Stay near the middle where there are more tiles around you.
-- After 30 seconds, random tiles begin to crumble on their own, so keep watching.
+- Head for areas with lots of untouched tiles, away from other players.
+- After 35 seconds, random tiles begin to crumble on their own.
 
-### Round 3: Spin Arena (final)
+### Spin Arena (final)
 
 A round platform with one huge beam sweeping around it.
 
@@ -122,6 +236,18 @@ A round platform with one huge beam sweeping around it.
 | Gap / void          | Empty space between platforms               | Jump (or jump + dive for big gaps)          |
 | Crumbling tile      | Orange, shaking tile                        | Step off now                                |
 | Checkpoint          | Blue dashed line with flags                 | Cross it to save your respawn point        |
+| Conveyor belt       | Purple strip with moving yellow arrows       | Go with it, or push hard against it        |
+| Ice                 | Shiny pale-blue floor                        | Make small, early turns; you'll slide      |
+| Bounce pad          | Glowing green pad with an arrow              | Step on it to be launched across a gap     |
+| Hammer              | Striped ball swinging on a rope              | Wait for it to swing past                  |
+| Snowball            | Big white ball rolling toward you            | Sidestep it                                |
+| Moving platform     | Yellow-edged slab sliding side to side       | Jump when it lines up                      |
+| Wind                | Fans, white streaks, faint arrows            | Lean into it or wait for it to stop        |
+| Spinning disc       | Striped turntable with a yellow centre       | It carries you round; aim ahead            |
+| Piston              | Yellow-and-navy striped block from a wall    | Pass while it's pulled back                |
+| Pop-up block        | Orange striped block rising from a dark slot | Go through a lane while it's down          |
+| Meteor target       | Red pulsing ring, red tiles                  | Get off the red tiles, fast                |
+| Cannon              | Navy cannon on the arena's edge              | Watch where it aims; dodge the ball        |
 | Finish line         | Checkered strip under a yellow FINISH arch  | Cross it!                                    |
 
 When you're stunned (little stars spin around your head), you can't move for a moment.
@@ -131,7 +257,7 @@ When you're stunned (little stars spin around your head), you can't move for a m
 ## 6. The tutorial
 
 **Main menu → Tutorial** (also offered automatically the first time you click
-*Play show*).
+**PLAY**).
 
 It's a short practice course with no rivals. Tip boxes at the top of the screen teach
 each move as you reach it:
@@ -160,7 +286,7 @@ Your progress is saved **on your computer** in `data/save.json`.
 |-----------------------------------------|-----------------------------------------------|
 | Qualify from the race                   | 100 + placement bonus + speed bonus           |
 | Placement bonus (race)                  | 15 × (8 − your place + 1); 1st place = 120     |
-| Speed bonus (race)                      | 3 for every second under 45s                   |
+| Speed bonus (race)                      | 3 for every second under 60s                   |
 | Survive Tile Panic                      | 150 + 1 per second survived                    |
 | Win the final                           | 650 + 1 per second survived                    |
 | Eliminated in the race                  | 20                                            |
@@ -198,7 +324,12 @@ records but keeps your name, colour and tutorial status.
 |-------------------------------------------|---------------------------------------------------------------------|
 | "Could not reach the game server"         | Make sure `python run.py` is still running in your terminal.        |
 | Browser didn't open                        | Open http://127.0.0.1:5000 yourself.                               |
-| Port 5000 already in use                   | Stop the other program, or change the port at the bottom of `run.py`. |
+| Port 5000 already in use                   | Stop the other program, or start with `WOBBLE_PORT=5001 python run.py`. |
+| "No room with code ..."                    | Check the 4 letters. Rooms close when everyone has left. |
+| Multiplayer feels laggy                     | The host's computer runs the round: a host on a fast computer and a good connection works best. |
 | Keys don't respond                          | Click on the game once so the browser window has focus.            |
-| Game paused by itself                      | It pauses when the window loses focus. Press `Esc` to resume.      |
+| Game paused by itself                      | It pauses when the window loses focus. Press `Esc` to resume. (Multiplayer never pauses.) |
+| A screen seems stuck                        | The game recovers from errors by itself and returns to the menu if needed. If it still looks stuck, make sure you're running the latest version (`git pull`), restart `python run.py`, then reload the page. |
 | Want a clean start                          | Delete `data/save.json` (or use **Reset progress**).                |
+| Game runs slowly or looks blurry           | It lowers its resolution automatically to stay smooth. On older computers, click **Graphics** on the main menu to switch to the classic 2D view. |
+| Screen is blank / 3D won't start            | Your browser may have WebGL turned off. The game switches to 2D automatically; updating the browser or graphics drivers enables 3D. |

@@ -9,48 +9,70 @@
 </head>
 <body>
 <div id="app">
+  <canvas id="game3d" class="hidden"></canvas>
   <canvas id="game"></canvas>
 
   <!-- In-game HUD -->
   <div id="hud" class="hidden">
-    <div class="hud-box hud-left">
-      <div id="hud-round" class="hud-small"></div>
-      <div id="hud-level" class="hud-big"></div>
+    <div class="hud-chip hud-left">
+      <span id="hud-round" class="hud-small"></span>
+      <span id="hud-level" class="hud-big"></span>
     </div>
-    <div class="hud-box hud-center">
-      <div id="hud-timer" class="hud-big">0.0</div>
-      <div id="hud-status" class="hud-small"></div>
+    <div class="hud-counter">
+      <div id="hud-status" class="counter-big"></div>
+      <div id="hud-sub" class="counter-sub"></div>
     </div>
-    <div class="hud-box hud-right">
-      <div class="hud-small">Personal best</div>
-      <div id="hud-pb" class="hud-big">--</div>
+    <div class="hud-chip hud-right">
+      <span id="hud-timer" class="hud-big">0.0</span>
+      <span class="hud-small">Best <b id="hud-pb">--</b></span>
     </div>
-    <div id="hud-keys">WASD / Arrows move · SPACE jump · SHIFT dive · ESC pause</div>
+    <div id="hud-players" class="hud-players" title="Every player: raised = qualified, grey = knocked out, outlined = you"></div>
+    <div id="feed" class="feed"></div>
+    <div id="look-hint" class="hidden">Click the game to steer the camera with your mouse</div>
+    <div id="hud-keys">WASD move · Mouse look 360° · Wheel zoom · SPACE jump · SHIFT dive · ESC pause</div>
   </div>
+  <div id="fps" class="hidden"></div>
+  <div id="small-note" class="hidden">Wobble Rush is played with a keyboard (and mouse). For the best experience, use a computer with a bigger window.</div>
   <div id="banner"></div>
   <div id="tip" class="hidden"></div>
 
   <!-- Main menu -->
   <section id="screen-menu" class="screen">
-    <div class="menu-layout">
+    <div class="menu-top">
       <div class="logo">
         <h1>Wobble<span>Rush</span></h1>
         <p>Run. Jump. Wobble. Win the crown.</p>
       </div>
+      <div id="menu-stats" class="menu-stats"></div>
+    </div>
+    <div class="menu-side">
       <div class="card player-card">
-        <canvas id="preview" width="140" height="140"></canvas>
         <label>Your name
           <input id="name-input" maxlength="16" autocomplete="off">
         </label>
         <div id="swatches" class="swatches" aria-label="Choose a colour"></div>
       </div>
-      <div class="menu-buttons">
-        <button id="btn-play" class="btn big primary">Play show</button>
-        <button id="btn-tutorial" class="btn">Tutorial</button>
-        <button id="btn-howto" class="btn">How to play</button>
-        <button id="btn-records" class="btn">Personal bests</button>
+      <button id="btn-tutorial" class="btn side"><i>?</i>Tutorial</button>
+      <button id="btn-howto" class="btn side"><i>i</i>How to play</button>
+      <button id="btn-records" class="btn side"><i>&#9733;</i>Personal bests</button>
+      <button id="btn-graphics" class="btn side small"><i>&#9881;</i><span>Graphics: 3D</span></button>
+    </div>
+    <div class="menu-hero">
+      <canvas id="preview" width="300" height="300"></canvas>
+      <div id="hero-name" class="hero-name"></div>
+    </div>
+    <div class="menu-play">
+      <div class="show-card">
+        <div class="eyebrow">Next show</div>
+        <div class="show-name">The Wobble Rush Show</div>
+        <div id="show-meta" class="show-meta">3 random rounds &middot; 12 players &middot; 1 crown</div>
+        <div class="rounds-pick">
+          <span>Rounds</span>
+          <div id="rounds-options" class="rounds-options"></div>
+        </div>
       </div>
-      <div id="menu-stats" class="menu-stats"></div>
+      <button id="btn-play" class="btn play">PLAY</button>
+      <button id="btn-mp" class="btn mp-btn"><i>&#9679;&#9679;</i>MULTIPLAYER <small>up to 20 friends</small></button>
     </div>
   </section>
 
@@ -78,19 +100,26 @@
             <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows</td><td>Move</td></tr>
             <tr><td><kbd>Space</kbd></td><td>Jump</td></tr>
             <tr><td><kbd>Shift</kbd> or <kbd>E</kbd></td><td>Dive (works in mid-air too)</td></tr>
-            <tr><td><kbd>Esc</kbd> or <kbd>P</kbd></td><td>Pause</td></tr>
+            <tr><td><kbd>Esc</kbd> or <kbd>P</kbd></td><td>Pause (in multiplayer: menu)</td></tr>
+            <tr><td>Mouse</td><td>Look around (360&deg;), wheel to zoom</td></tr>
+            <tr><td><kbd>F</kbd></td><td>Show / hide FPS counter</td></tr>
           </table>
           <h3>The show</h3>
-          <p>You and 11 computer players compete over 3 rounds. Players who don't
+          <p>Pick 3, 4 or 5 rounds. Each show picks random rounds: a race to open, then
+             random races and survival rounds, and one of three finals. Players who don't
              qualify are knocked out. Last one standing in the final wins the crown.</p>
+          <h3>Multiplayer</h3>
+          <p>Press <b>Multiplayer</b>, create a room and share its 4-letter code. Up to 20
+             people can join with the same code. Fewer qualify each round until one
+             player takes the crown. Knocked out? Keep watching with <kbd>&larr;</kbd><kbd>&rarr;</kbd>.</p>
         </div>
         <div>
           <h3>Rounds</h3>
-          <ol class="rounds">
-            <li><b>Spin Sprint</b> (race): first 8 over the finish line qualify.</li>
-            <li><b>Tile Panic</b> (survival): tiles crumble after you touch them. Last 4 standing qualify.</li>
-            <li><b>Spin Arena</b> (final): jump the sweeping beam and stay on the shrinking arena.</li>
-          </ol>
+          <ul class="rounds">
+            <li><b>Races</b> (9): reach the finish before the spots fill up. Round 1 is always a race.</li>
+            <li><b>Survival</b> (Tile Panic, Meteor Meadow, Blizzard Bluff): stay on until enough players fall.</li>
+            <li><b>Finals</b> (Spin Arena, Cannon Clash, Pinball Pit): last one standing wins the crown.</li>
+          </ul>
           <h3>Tips</h3>
           <ul>
             <li>Jump just before a spinning bar reaches you.</li>
@@ -99,7 +128,6 @@
           </ul>
         </div>
       </div>
-      <p class="muted">The full guide is in <code>GUIDE.md</code> in the project folder.</p>
       <div class="row"><button class="btn primary" data-back>Back</button></div>
     </div>
   </section>
@@ -109,7 +137,6 @@
     <div class="card dialog">
       <h2>Personal bests</h2>
       <table id="records-table" class="records"></table>
-      <p class="muted">Saved on this computer in <code>data/save.json</code>.</p>
       <div class="row">
         <button class="btn primary" data-back>Back</button>
         <button id="btn-reset" class="btn danger">Reset progress</button>
@@ -117,37 +144,98 @@
     </div>
   </section>
 
+  <!-- Multiplayer: create or join a room -->
+  <section id="screen-mp" class="screen hidden">
+    <div class="card dialog wide mp-card">
+      <h2>Multiplayer</h2>
+      <p>Play a show against up to 20 people. One person creates a room and shares its
+         4-letter code; everyone else types the same code to join.</p>
+      <label class="mp-name">Your name
+        <input id="mp-name" maxlength="16" autocomplete="off">
+      </label>
+      <div class="mp-grid">
+        <div class="mp-box">
+          <h3>Create a room</h3>
+          <p class="muted">You'll be the host: you pick the rounds and start the show.</p>
+          <button id="btn-mp-create" class="btn big primary">Create room</button>
+        </div>
+        <div class="mp-box">
+          <h3>Join a room</h3>
+          <input id="mp-code" class="code-input" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Room code">
+          <button id="btn-mp-join" class="btn big primary">Join</button>
+        </div>
+      </div>
+      <div class="row"><button class="btn" data-back>Back</button></div>
+    </div>
+  </section>
+
+  <!-- Multiplayer lobby -->
+  <section id="screen-lobby" class="screen hidden">
+    <div class="card dialog wide lobby">
+      <div class="lobby-head">
+        <div>
+          <div class="eyebrow">Room code</div>
+          <div id="lobby-code" class="room-code">----</div>
+        </div>
+        <p id="lobby-share" class="lobby-share"></p>
+      </div>
+      <h3>Players <span id="lobby-count" class="muted"></span></h3>
+      <ul id="lobby-players" class="lobby-players"></ul>
+      <div class="lobby-settings">
+        <div class="opt-row"><span>Rounds</span><div id="lobby-rounds" class="seg"></div></div>
+        <div class="opt-row"><span>Bots</span><div id="lobby-bots" class="seg"></div></div>
+        <span id="lobby-settings-note" class="muted"></span>
+      </div>
+      <p id="lobby-status" class="lobby-status"></p>
+      <div class="row">
+        <button id="btn-lobby-start" class="btn big primary">Start show</button>
+        <button id="btn-lobby-leave" class="btn danger">Leave room</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Round intro -->
-  <section id="screen-intro" class="screen hidden">
-    <div class="card dialog intro">
-      <div id="intro-round" class="eyebrow"></div>
+  <section id="screen-intro" class="screen hidden showbg">
+    <div class="intro-wrap">
+      <div id="intro-round" class="pill"></div>
       <div id="intro-type" class="badge"></div>
-      <h2 id="intro-name"></h2>
-      <p id="intro-desc"></p>
+      <h2 id="intro-name" class="mega"></h2>
+      <p id="intro-desc" class="intro-desc"></p>
       <p id="intro-goal" class="goal"></p>
-      <p id="intro-pb" class="muted"></p>
-      <div class="row"><button id="btn-ready" class="btn big primary">Ready! (Space)</button></div>
+      <div id="intro-players" class="players-row"></div>
+      <p id="intro-pb" class="intro-pb"></p>
+      <div class="row">
+        <button id="btn-ready" class="btn big primary">Ready! (Space)</button>
+        <button id="btn-intro-quit" class="btn small ghost">Quit show</button>
+      </div>
     </div>
   </section>
 
   <!-- Round result -->
-  <section id="screen-result" class="screen hidden">
-    <div class="card dialog">
-      <h2 id="result-title"></h2>
-      <p id="result-detail"></p>
+  <section id="screen-result" class="screen hidden showbg">
+    <div class="stamp-wrap">
+      <h2 id="result-title" class="stamp"></h2>
+      <p id="result-detail" class="result-detail"></p>
       <p id="result-pb" class="pb-flash hidden">New personal best!</p>
-      <div class="row"><button id="btn-continue" class="btn big primary">Continue (Space)</button></div>
+      <p id="result-next" class="result-next hidden"></p>
+      <div class="row">
+        <button id="btn-continue" class="btn big primary">Continue (Space)</button>
+        <button id="btn-result-quit" class="btn small ghost">Quit show</button>
+      </div>
     </div>
   </section>
 
   <!-- Show result -->
-  <section id="screen-show" class="screen hidden">
+  <section id="screen-show" class="screen hidden showbg">
     <div class="card dialog">
       <canvas id="show-preview" width="140" height="140"></canvas>
       <h2 id="show-title"></h2>
       <p id="show-detail"></p>
-      <div class="score">Score <span id="show-score">0</span></div>
+      <div id="show-score-wrap" class="score">Score <span id="show-score">0</span>
+        <p class="score-help">Points for every round you qualify in, finishing high, finishing fast and surviving long.</p>
+      </div>
       <ul id="show-records" class="new-records"></ul>
+      <ol id="show-standings" class="standings hidden"></ol>
       <div class="row">
         <button id="btn-again" class="btn big primary">Play again</button>
         <button class="btn" data-back>Main menu</button>
@@ -160,6 +248,7 @@
     <div class="card dialog">
       <h2>Tutorial complete!</h2>
       <p id="tutdone-detail"></p>
+      <ul id="tutdone-skills" class="skills"></ul>
       <p>You know every move now. Time to go for the crown!</p>
       <div class="row">
         <button id="btn-tut-play" class="btn big primary">Play a show</button>
@@ -172,16 +261,17 @@
   <!-- Pause -->
   <section id="screen-pause" class="screen hidden">
     <div class="card dialog">
-      <h2>Paused</h2>
+      <h2 id="pause-title">Paused</h2>
       <div class="row column">
         <button id="btn-resume" class="btn big primary">Resume</button>
         <button id="btn-restart-tut" class="btn hidden">Restart tutorial</button>
         <button id="btn-quit" class="btn danger">Quit to menu</button>
       </div>
-      <p class="muted">Quitting a show doesn't save its score.</p>
+      <p id="pause-note" class="muted">Quitting a show doesn't save its score.</p>
     </div>
   </section>
 
+  <div id="wipe"></div>
   <div id="error" class="hidden"></div>
 </div>
 <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>

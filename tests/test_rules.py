@@ -78,3 +78,11 @@ def test_survival_longer_is_better():
     assert rules.update_level_best(profile, "tile_panic", 10)
     assert not rules.update_level_best(profile, "tile_panic", 8)
     assert rules.update_level_best(profile, "tile_panic", 12)
+
+
+def test_going_out_in_round_one_is_not_a_record():
+    from game import storage
+    profile = storage.load("/nonexistent/save.json")
+    rounds = [{"level": "spin_sprint", "qualified": False, "time": 50.0, "place": None}]
+    _, records = rules.apply_results(profile, rounds)
+    assert not any(r["label"] == "Furthest round" for r in records)

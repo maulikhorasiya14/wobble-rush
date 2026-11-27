@@ -1,16 +1,18 @@
 """HTTP routes: the game page plus a small JSON API."""
 from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+import uuid
 
-from . import rules, storage
-from .levels import LEVELS, PALETTE, game_data
+from flask import Blueprint, current_app, jsonify, make_response, render_template, request
+
+from . import identity, rules, storage
+from .levels import LEVELS, PALETTE, ROUND_OPTIONS, game_data, make_show
 
 bp = Blueprint("game", __name__)
 
 
 def _path() -> str:
-    return current_app.config["SAVE_PATH"]
+    return identity.profile_path()
 
 
 def _error(message: str, status: int = 400):
@@ -19,7 +21,12 @@ def _error(message: str, status: int = 400):
 
 @bp.get("/")
 def index():
-    return render_template("index.html")
+    res = make_response(render_template("index.html"))
+    if not identity.is_local() and identity.guest_id() is None:
+        # A friend joining over the network: give them their own save file.
+        res.set_cookie(identity.GUEST_COOKIE, identity.new_guest_id(),
+                       max_age=5 * 365 * 24 * 3600, samesite="Lax")
+    return res
 
 
 @bp.get("/api/levels")
@@ -72,19 +79,70 @@ def reset():
     return jsonify(profile)
 
 
+def _shows() -> dict:
+    return current_app.config.setdefault("SHOWS", {})
+
+
+@bp.post("/api/show")
+def new_show():
+    """Start a show: pick random rounds for the chosen number of rounds."""
+    data = request.get_json(silent=True) or {}
+    count = data.get("rounds")
+    if count not in ROUND_OPTIONS:
+        return _error(f"rounds must be one of {ROUND_OPTIONS}")
+    plan = make_show(count)
+    shows = _shows()
+    while len(shows) >= 50:  # forget abandoned shows
+        shows.pop(next(iter(shows)))
+    show_id = uuid.uuid4().hex
+    shows[show_id] = plan
+    return jsonify({"show_id": show_id, "rounds": plan})
+
+
+@bp.post("/api/round")
+def round_done():
+    """Save a finished round's personal best straight away (the show may be quit later)."""
+    data = request.get_json(silent=True) or {}
+    show_id, index = data.get("show_id"), data.get("index")
+    plan = _shows().get(show_id) if isinstance(show_id, str) else None
+    if plan is None:
+        return _error("unknown show")
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(plan):
+        return _error("index must be a round of the show")
+    time, qualified = data.get("time"), data.get("qualified")
+    if isinstance(time, bool) or not isinstance(time, (int, float)) or not 0 <= time <= rules.MAX_TIME:
+        return _error("time must be a number of seconds")
+    if not isinstance(qualified, bool):
+        return _error("qualified must be true or false")
+    profile = storage.load(_path())
+    records = rules.round_records(profile, {"level": plan[index]["level"], "qualified": qualified,
+                                            "time": round(float(time), 2)})
+    storage.save(_path(), profile)
+    return jsonify({"records": records, "profile": profile})
+
+
 @bp.post("/api/results")
 def results():
     data = request.get_json(silent=True) or {}
+    show_id = data.get("show_id")
+    if show_id is None:
+        plan = rules.SHOW  # the classic show
+    else:
+        plan = _shows().get(show_id) if isinstance(show_id, str) else None
+        if plan is None:
+            return _error("unknown show")
     try:
-        rounds = rules.validate_rounds(data.get("rounds"))
+        rounds = rules.validate_rounds(data.get("rounds"), plan)
     except ValueError as exc:
         return _error(str(exc))
+    if show_id is not None:
+        _shows().pop(show_id, None)  # each show can be submitted once
     profile = storage.load(_path())
-    score, records = rules.apply_results(profile, rounds)
+    score, records = rules.apply_results(profile, rounds, plan)
     storage.save(_path(), profile)
     return jsonify({
         "score": score,
-        "won": rounds[-1]["qualified"] and len(rounds) == len(rules.SHOW),
+        "won": rules.is_win(rounds, plan),
         "records": records,
         "profile": profile,
         "level_names": {k: v["name"] for k, v in LEVELS.items()},

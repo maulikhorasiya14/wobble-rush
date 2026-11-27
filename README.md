@@ -2,9 +2,10 @@
 
 [![Tests](https://github.com/maulikhorasiya14/wobble-rush/actions/workflows/tests.yml/badge.svg)](https://github.com/maulikhorasiya14/wobble-rush/actions/workflows/tests.yml)
 
-An original, single-player obstacle-course party game that runs locally in your browser.
-Race 11 computer players through three knockout rounds (a race, a crumbling-tile
-survival round and a spinning-beam final) and try to win the crown.
+An original obstacle-course party game that runs in your browser. Play alone against
+11 computer players, or **with up to 20 friends** in a multiplayer room joined with a
+4-letter code. Survive knockout rounds (races, crumbling-tile survival rounds and a
+last-one-standing final) and try to win the crown.
 
 ![Main menu](docs/screenshots/menu.png)
 
@@ -14,8 +15,14 @@ survival round and a spinning-beam final) and try to win the crown.
 
 - **Python (Flask)** serves the game and owns the game data: level layouts, physics
   tuning, the show format, scoring and the personal-best save file.
-- **JavaScript (HTML canvas)** runs the moment-to-moment simulation, the AI rivals and
-  the drawing, using the numbers the Python server provides.
+- **JavaScript** runs the moment-to-moment simulation and the AI rivals, using the
+  numbers the Python server provides, and draws the game in **3D with
+  [three.js](https://threejs.org)** (with a classic 2D view as a fallback).
+- **Multiplayer** runs over WebSockets (`flask-sock`): the Python server keeps the
+  rooms and runs the show. Every player moves their own character in their own
+  browser (so controls respond instantly) and reports it; the room host's browser
+  runs the rest of each round (bots, obstacles, rules) in a background worker and
+  streams 30 snapshots a second, which every browser plays back smoothly.
 
 New to the game? Read **[GUIDE.md](GUIDE.md)**, or play the in-game tutorial.
 
@@ -38,14 +45,41 @@ python run.py
 The game opens at http://127.0.0.1:5000. Press `Ctrl+C` in the terminal to stop it.
 Set `WOBBLE_NO_BROWSER=1` to stop `run.py` from opening a browser tab.
 
+### Playing with friends
+
+Press **Multiplayer** and **Create room** to get a 4-letter room code. Everyone who
+opens the game on this server presses **Multiplayer**, types the code and presses
+**Join**. To let friends on other computers reach your server, put it behind a tunnel
+such as ngrok or forward port 5000 on your router.
+
+Set `WOBBLE_HOST=127.0.0.1` to keep the game on your own computer only, and
+`WOBBLE_PORT` to use a different port.
+
 ## Features
 
-- 3-round show: **Spin Sprint** (race) → **Tile Panic** (survival) → **Spin Arena** (final)
+- Pick a **3, 4 or 5-round** show; rounds are drawn at random from 15 rounds, each
+  tagged with where it can appear (opener, middle, final)
+- 9 races: Spin Sprint, Conveyor Canyon, Bounce Bay, Frosty Slopes, Hammer Hall,
+  Drift Lifts, Gusty Gorge, Turntable Trail, Piston Pass
+- 3 survival rounds: Tile Panic, Meteor Meadow, Blizzard Bluff
+- 3 finals: Spin Arena, Cannon Clash, Pinball Pit
 - 11 AI rivals with different skill levels
+- **Multiplayer rooms**: up to 20 people join with a 4-letter code; the host picks
+  1–5 rounds and can fill empty spots with bots. Fewer players qualify each round
+  until one wins the crown. Knocked-out players keep watching, the host role moves
+  on if the host leaves, and each player's stats are saved to their own profile
 - Jumping, diving, jump-dive combos, checkpoints, knockbacks and stuns
 - Interactive tutorial with step-by-step tips, offered automatically on first play
 - Personal bests saved locally: best score, furthest round, crowns, best times per level
 - Pick your name and colour
+- 3D graphics: lit, shadowed candy courses, original animated characters (running,
+  jumping, diving, landing squash, ragdoll tumbles when hit), particles and a smooth
+  chase camera with fly-over round intros
+- Smooth movement: fixed-step physics with interpolated drawing, jump buffering and
+  "coyote time" (a brief grace period to jump after running off an edge)
+- Automatic resolution scaling to hold a steady frame rate; **Graphics** button on the
+  menu switches between 3D and the classic 2D view (also used automatically when the
+  browser has no WebGL)
 
 ## Project structure
 
@@ -63,16 +97,23 @@ wobble-rush/
 │   ├── rules.py             # Result validation, scoring, personal bests
 │   ├── storage.py           # JSON save file load/save/reset
 │   ├── routes.py            # Page + JSON API
+│   ├── multiplayer.py       # Rooms, codes and the multiplayer show (WebSocket /ws)
+│   ├── identity.py          # Host's save file vs. per-friend guest save files
 │   ├── templates/index.html # Menus, HUD and screens
 │   └── static/
 │       ├── css/style.css
 │       └── js/
 │           ├── main.js      # Game flow, menus, HUD
+│           ├── mp.js        # Multiplayer: lobby, rounds, watching
+│           ├── netsync.js   # Snapshots and smooth playback of other players
+│           ├── hostworker.js # Runs a multiplayer round for the host (background worker)
 │           ├── world.js     # Physics, obstacles, round rules
 │           ├── bots.js      # AI rivals
-│           ├── render.js    # Canvas drawing and characters
+│           ├── render3d.js  # 3D renderer: scene, characters, animation, camera
+│           ├── render.js    # Classic 2D renderer (fallback) + progress bar
 │           ├── input.js     # Keyboard input
 │           └── api.js       # Calls to the Python API
+│       └── vendor/          # three.js (MIT) and the Fredoka font (OFL), bundled for offline play
 └── tests/                   # pytest suite
 ```
 
@@ -85,7 +126,13 @@ wobble-rush/
 | POST   | `/api/profile`          | Update `name` and/or `color`                    |
 | POST   | `/api/profile/tutorial` | Mark tutorial done, record its time `{time}`   |
 | POST   | `/api/profile/reset`    | Clear stats and personal bests                 |
-| POST   | `/api/results`          | Submit a finished show `{rounds: [...]}`, get score and new records |
+| POST   | `/api/show`             | Start a random show `{rounds: 3/4/5}`, returns `show_id` and its rounds |
+| POST   | `/api/round`            | Save a finished round's personal best right away `{show_id, index, time, qualified}` |
+| POST   | `/api/results`          | Submit a finished show `{show_id, rounds: [...]}`, get score and new records |
+| WS     | `/ws`                   | Multiplayer messages (see `game/multiplayer.py`) |
+
+Requests from the computer running the server use `data/save.json`. Friends on the
+network each get their own save file in `data/guests/` (picked by a cookie).
 
 ## Tests
 
@@ -94,7 +141,15 @@ pytest
 ```
 
 They also run automatically on GitHub for every push and pull request. The tests cover level sanity (every gap can be crossed, spawns and checkpoints sit on
-the floor), scoring and personal-best rules, save-file handling and the API.
+the floor), scoring and personal-best rules, save-file handling, the API, and
+multiplayer rooms (codes, joining, the 20-player cap, host hand-over, a full show).
+
+## Third-party assets
+
+- [three.js](https://github.com/mrdoob/three.js) r170, MIT licence: `game/static/vendor/three/LICENSE`
+- [Fredoka](https://github.com/hafontia/Fredoka-One) font, SIL Open Font License: `game/static/vendor/fonts/OFL-LICENSE.txt`
+
+All characters, courses and artwork are original and generated in code.
 
 ## Changing the game
 
