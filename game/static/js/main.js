@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { Input } from "./input.js";
 import { Multiplayer } from "./mp.js";
 import { music } from "./music.js";
-import { setMusicVolume, setVolume, sfx } from "./sfx.js";
+import { ambience, at, setMusicVolume, setVolume, sfx, voicePitch } from "./sfx.js";
 import { Renderer, drawBlob } from "./render.js";
 import { CharacterPreview, Renderer3D, webglAvailable } from "./render3d.js";
 import { World } from "./world.js";
@@ -147,6 +147,7 @@ async function boot() {
       app.drawDt = 0;
     }
     updateMusic();
+    updateAmbience();
     updateFps(dt);
   };
   requestAnimationFrame(loop);
@@ -594,7 +595,7 @@ function tick(dt) {
     const n = Math.ceil(w.countdown);
     if (n !== app.lastCount) {
       app.lastCount = n;
-      if (n <= 3) { banner(String(n)); sfx.beep(); }
+      if (n <= 3) { banner(String(n)); sfx.beep(n); }
     }
   }
   // Your own clock stops when you cross the line.
@@ -761,19 +762,54 @@ function handleEvents(events) {
   }
 }
 
-/** Sounds for what happens to the character you follow, and loud things nearby. */
+/** Sounds for what happens to the character you follow, other players nearby, and loud things nearby. */
 const OWN_SOUNDS = ["jump", "dive", "land", "hit", "bump", "pad", "fall", "respawn", "checkpoint", "lifelost"];
+const OTHER_SOUNDS = ["jump", "dive", "land", "hit", "bump", "pad", "fall"];
 const NEAR_SOUNDS = ["door", "bonk", "crack", "tile", "cannon"];
+const HEAR = 650; // px: how far away you can hear things
+const otherLast = new Map();
+
+/**
+ * Where a sound at world (x, y) is, heard from the character you follow:
+ * panned left/right relative to the camera, quieter further away.
+ */
+function spotOf(x, y, me) {
+  if (!me) return { pan: 0, vol: 1 };
+  const yaw = renderer.inputYaw || 0;
+  const dx = x - me.x, dy = y - me.y, d = Math.hypot(dx, dy);
+  const right = dx * Math.cos(yaw) + dy * Math.sin(yaw);
+  return { pan: Math.max(-0.85, Math.min(0.85, right / 260)), vol: Math.pow(Math.max(0, 1 - d / HEAR), 1.4) };
+}
+
 function playSounds(events) {
   const fid = followId();
   const me = app.world.bodies.find((b) => b.id === fid);
   for (const e of events) {
     if (e.type === "go") sfx.go();
-    else if (e.id === fid && OWN_SOUNDS.includes(e.type)) sfx[e.type]();
-    else if (e.id === fid && e.type === "finish") sfx.qualified();
+    else if (e.id === fid && OWN_SOUNDS.includes(e.type)) {
+      at({ pitch: voicePitch(e.id) }, () => (e.type === "land" ? sfx.land((e.v || 420) / 420) : sfx[e.type]()));
+      // Falling into the sea: a splash when you hit the water.
+      if (e.type === "fall") setTimeout(() => sfx.splash(), 600);
+    } else if (e.id === fid && e.type === "finish") sfx.qualified();
     else if (e.id === fid && e.type === "eliminated") sfx.eliminated();
-    else if (NEAR_SOUNDS.includes(e.type) && me && Math.hypot(e.x - me.x, e.y - me.y) < 650) sfx[e.type]();
+    else if (NEAR_SOUNDS.includes(e.type) && me && Math.hypot(e.x - me.x, e.y - me.y) < HEAR) at(spotOf(e.x, e.y, me), () => sfx[e.type]());
+    else if (me && e.id !== undefined && OTHER_SOUNDS.includes(e.type)) {
+      // Other players around you: quieter, from where they are, in their own voice.
+      const sp = spotOf(e.x, e.y, me);
+      if (sp.vol < 0.05) continue;
+      const now = performance.now();
+      if (now - (otherLast.get(e.type) || 0) < 90) continue;  // a crowd jumping at once is one sound
+      otherLast.set(e.type, now);
+      at({ ...sp, vol: sp.vol * 0.55, pitch: voicePitch(e.id) }, () => (e.type === "land" ? sfx.land((e.v || 420) / 420) : sfx[e.type]()));
+    }
   }
+}
+
+/** A quiet background bed for the world you're in (waves, wind, hum...). */
+function updateAmbience() {
+  const w = app.world;
+  const on = w && !app.paused && ["play", "tutorial", "menu", "lobby"].includes(app.mode);
+  ambience.set(on ? w.level.theme?.env || "tropical" : null);
 }
 
 // ---- music and ambient sound
@@ -824,8 +860,25 @@ function ambientSounds(w) {
   const sp = Math.hypot(me.vx, me.vy);
   if (me.z <= 0 && !me.falling && sp > 80) {
     const phase = Math.floor((me.walk * 2) / Math.PI);
-    if (phase !== app.stepPhase) { app.stepPhase = phase; sfx.step(); }
+    if (phase !== app.stepPhase) { app.stepPhase = phase; sfx.step(surfaceUnder(w, me)); }
   }
+  const near = (x, y, fn) => at(spotOf(x, y, me), fn);
+  // Giant bouncing balls: a slam each time one lands near you.
+  w.bouncers.forEach((o, k) => {
+    const landed = o.bz < 4 && (nearState.get(`ob${k}`) ?? 99) >= 4;
+    nearState.set(`ob${k}`, o.bz);
+    if (landed && Math.hypot(o.bx - me.x, o.y - me.y) < HEAR) near(o.bx, o.y, () => sfx.slam());
+  });
+  // Vanishing platforms close by: a chime when they start flashing, a "shwip" when they go.
+  w.blinks.forEach((p, k) => {
+    const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+    if (Math.abs(cx - me.x) > 400 || Math.abs(cy - me.y) > 300) return;
+    const warn = w.blinkWarn(p, w.time);
+    const st = warn < 0 ? 2 : warn > 0 ? 1 : 0, was = nearState.get(`bl${k}`) ?? 0;
+    nearState.set(`bl${k}`, st);
+    if (st === 1 && was === 0) near(cx, cy, () => sfx.blinkWarn());
+    if (st === 2 && was !== 2) near(cx, cy, () => sfx.blinkOut());
+  });
   w.spinners.forEach((s, k) => {
     let close = false;
     if (Math.abs(s.x - me.x) < s.arm + 90 && Math.abs(s.y - me.y) < s.arm + 90) {
@@ -834,30 +887,39 @@ function ambientSounds(w) {
         if (segDist(me.x, me.y, s.x, s.y, s.x + Math.cos(ang) * s.arm, s.y + Math.sin(ang) * s.arm) < 75) close = true;
       }
     }
-    if (cameClose(`s${k}`, close)) sfx.whoosh(Math.min(1.6, 0.7 + Math.abs(s.omega) * 0.3));
+    if (cameClose(`s${k}`, close)) near(s.x, s.y, () => sfx.whoosh(Math.min(1.6, 0.7 + Math.abs(s.omega) * 0.3)));
   });
   w.pendulums.forEach((p, k) => {
-    if (cameClose(`p${k}`, Math.hypot(p.bx - me.x, p.y - me.y) < p.r + 110)) sfx.swing();
+    if (cameClose(`p${k}`, Math.hypot(p.bx - me.x, p.y - me.y) < p.r + 110)) near(p.bx, p.y, () => sfx.swing());
   });
   w.hammers.forEach((h, k) => {
-    const near = w.hammerHeads(h).some(([hx, hy]) => Math.hypot(hx - me.x, hy - me.y) < h.r + 110);
-    if (cameClose(`h${k}`, near)) sfx.swing();
-  });
-  w.bouncers.forEach((o, k) => {
-    if (cameClose(`o${k}`, o.bz < 20 && Math.hypot(o.bx - me.x, o.y - me.y) < 260)) sfx.piston();
+    const head = w.hammerHeads(h).find(([hx, hy]) => Math.hypot(hx - me.x, hy - me.y) < h.r + 110);
+    if (cameClose(`h${k}`, !!head)) near(head[0], head[1], () => sfx.swing());
   });
   w.sliders.forEach((s, k) => {
-    if (cameClose(`w${k}`, Math.abs(s.cx - me.x) < s.w / 2 + 50 && Math.abs(s.y - me.y) < 70)) sfx.slide();
+    if (cameClose(`w${k}`, Math.abs(s.cx - me.x) < s.w / 2 + 50 && Math.abs(s.y - me.y) < 70)) near(s.cx, s.y, () => sfx.slide());
   });
   w.pistons.forEach((p, k) => {
-    if (cameClose(`k${k}`, Math.abs(p.vx) > 200 && Math.abs(p.y - me.y) < 160 && Math.abs(p.cx - me.x) < 260)) sfx.piston();
+    if (cameClose(`k${k}`, Math.abs(p.vx) > 200 && Math.abs(p.y - me.y) < 160 && Math.abs(p.cx - me.x) < 260)) near(p.cx, p.y, () => sfx.piston());
   });
   for (const lg of w.logs) {
-    if (cameClose(`l${lg.id}`, Math.abs(lg.y - me.y) < 220 && me.x > lg.x0 - 20 && me.x < lg.x1 + 20)) sfx.roll();
+    if (cameClose(`l${lg.id}`, Math.abs(lg.y - me.y) < 220 && me.x > lg.x0 - 20 && me.x < lg.x1 + 20)) near(me.x, lg.y, () => sfx.roll());
   }
   for (const r of w.rollers) {
-    if (cameClose(`r${r.id}`, Math.hypot(r.x - me.x, r.y - me.y) < 200)) sfx.roll();
+    if (cameClose(`r${r.id}`, Math.hypot(r.x - me.x, r.y - me.y) < 200)) near(r.x, r.y, () => sfx.roll());
   }
+}
+
+/** What you're walking on, for the footstep sound. */
+function surfaceUnder(w, b) {
+  if (b.onIce) return "ice";
+  for (const z of w.zones) {
+    if (z.type === "conveyor" && b.x >= z.x && b.x <= z.x + z.w && b.y >= z.y && b.y <= z.y + z.h) return "belt";
+  }
+  const env = w.level.theme?.env;
+  if (env === "snow") return "snow";
+  if (env === "future" || env === "neon") return "metal";
+  return "floor";
 }
 
 /** Confetti over the screen when you qualify or win. */
@@ -1318,6 +1380,11 @@ function openRounds() {
 document.addEventListener("click", (e) => {
   if (e.target instanceof Element && e.target.closest("button")) sfx.click();
 }, true);
+// ...and a faint tick when the pointer moves onto one.
+document.addEventListener("pointerover", (e) => {
+  const btn = e.target instanceof Element && e.target.closest("button");
+  if (btn && !btn.disabled && !btn.contains(e.relatedTarget)) sfx.hover();
+});
 on("btn-tutorial", startTutorial);
 on("btn-howto", () => showScreen("howto"));
 on("btn-records", showRecords);

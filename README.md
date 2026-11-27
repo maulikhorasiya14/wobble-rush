@@ -106,9 +106,14 @@ would drop everyone in a room; while editing the game, start it with
   (each round's best is saved as soon as the round ends)
 - Pick your name and colour
 - Original cartoon sound effects and music, all synthesized in the browser (no audio
-  files): footsteps, jumps, landings, dives, bonks, boings, and whooshes as spinners,
-  hammers, walls, pistons and logs pass close by; countdown, qualify, crown and
-  round-transition stingers; and four original music tracks (menu, race, survival,
+  files): footsteps that change with the surface (ice, snow, metal, belts), jumps,
+  landings, dives, splashes, bonks and boings; little cartoon voices ("hup!", "oof!",
+  "waaah!") with each character at its own pitch; whooshes, slams and chimes as
+  spinners, hammers, bouncing balls, walls, vanishing platforms and logs pass close by;
+  other players heard from where they are (panned and quieter with distance) in a
+  small room reverb; a quiet ambience for each world (waves, wind, a city hum); a
+  cheering crowd for the start, qualifying and the crown, a sad trombone when you're
+  out; and four original music tracks (menu, race, survival,
   final) built from sections with randomized phrases so they don't loop audibly.
   Separate volume sliders for effects and music.
 - Settings: graphics mode and quality, sound volume, mouse sensitivity, invert Y, FPS counter

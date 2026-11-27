@@ -644,7 +644,7 @@ export class World {
           b.sliding = true;
           b.stun = Math.max(b.stun, P.dive_recover);
         }
-        if (impact > 250) this.events.push({ type: "land", id: b.id, x: b.x, y: b.y });
+        if (impact > 250) this.events.push({ type: "land", id: b.id, x: b.x, y: b.y, v: Math.round(impact) });
       }
     }
     const sp = Math.hypot(b.vx, b.vy);
