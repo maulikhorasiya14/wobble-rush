@@ -2,7 +2,7 @@
 // The server (game/multiplayer.py) runs the show. The room host's browser runs
 // each round in a worker (hostworker.js); every browser plays the host's
 // snapshots back smoothly and moves its own character itself (netsync.js).
-import { encodeBody, Mirror, SHARED_EVENTS, SNAP_EVERY } from "./netsync.js";
+import { encodeBody, Mirror, SHARED_EVENTS, STATE_EVERY } from "./netsync.js";
 import { World } from "./world.js";
 
 const STEP = 1 / 120;
@@ -58,7 +58,7 @@ export class Multiplayer {
           this.waiting.reject(new Error("the connection dropped while joining"));
           this.waiting = null;
         } else if (open) {
-          this.ui.onDisconnected();
+          this._reconnect();
         }
       };
     });
@@ -94,6 +94,39 @@ export class Multiplayer {
       if (code) this.send({ t: "join", code, name: p.name, color: p.color });
       else this.send({ t: "create", name: p.name, color: p.color, ...settings });
     });
+  }
+
+  /**
+   * The connection dropped mid-game (Wi-Fi blip, server hiccup): keep playing
+   * and quietly get back in. The server holds our place for a short while.
+   */
+  async _reconnect() {
+    if (this.reconnecting || this.closing) return;
+    this.reconnecting = true;
+    const until = performance.now() + 18000;
+    while (!this.closing && performance.now() < until) {
+      this.ui.showInfo("Connection lost. Reconnecting...");
+      try {
+        await this.connect();
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { this.waiting = null; reject(new Error("no answer")); }, 4000);
+          this.waiting = {
+            resolve: () => { clearTimeout(timer); resolve(); },
+            reject: (err) => { clearTimeout(timer); reject(err); },
+          };
+          this.send({ t: "resume", id: this.me, secret: this.secret });
+        });
+        this.reconnecting = false;
+        this.ui.showInfo("Reconnected!");
+        return;
+      } catch (err) {
+        this._dropSocket();
+        if (err instanceof RoomError) break;   // our place is gone
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    this.reconnecting = false;
+    if (!this.closing) this.ui.onDisconnected();
   }
 
   _dropSocket() {
@@ -237,11 +270,17 @@ export class Multiplayer {
 
   _onRound(msg) {
     const { app, input, data } = this.ui;
+    // Back after a reconnect, same round: carry on where we were.
+    if (this.round && this.world && msg.index === this.round.index && msg.seed === this.round.seed) {
+      this.round = msg;
+      if (this.isHost && !this.worker) this._startWorker(data.levels[msg.level], msg);
+      return;
+    }
     this._clearTimers();
     this.round = msg;
     const lvl = data.levels[msg.level];
     this.world = new World(lvl, data.physics, msg.roster, {
-      qualify: msg.qualify, countdown: msg.intro + 3, localId: this.me, multiplayer: true,
+      qualify: msg.qualify, countdown: msg.intro + 3, localId: this.me, multiplayer: true, seed: msg.seed,
     });
     this.mirror = new Mirror(this.world, this.me);
     app.world = this.world;
@@ -263,6 +302,7 @@ export class Multiplayer {
     $("btn-ready").classList.add("hidden");
     $("btn-intro-quit").classList.add("hidden");
     this.ui.showScreen("intro");
+    this.ui.sfx.introSting();
     const best = this.ui.pbFor(msg.level);
     const pb = best == null ? "" : ` · Personal best ${best.toFixed(2)}s`;
     const watching = this.playing ? "" : "You're watching this round. ";
@@ -287,7 +327,7 @@ export class Multiplayer {
     }
     this.worker.postMessage({
       t: "start", level: lvl, physics: this.ui.data.physics, roster: msg.roster,
-      qualify: msg.qualify, countdown: msg.intro + 3, index: msg.index,
+      qualify: msg.qualify, countdown: msg.intro + 3, index: msg.index, seed: msg.seed,
       cred: { id: this.me, secret: this.secret },
     });
   }
@@ -342,7 +382,7 @@ export class Multiplayer {
       }
     }
     this.sendT += dt;
-    if (this.sendT >= SNAP_EVERY && (this.ui.app.mode === "play" || this.ui.app.mode === "intro")) {
+    if (this.sendT >= STATE_EVERY && (this.ui.app.mode === "play" || this.ui.app.mode === "intro")) {
       this.sendT = 0;
       const row = encodeBody(mine);
       const ev = this.outEvents.splice(0, 12);
@@ -353,7 +393,7 @@ export class Multiplayer {
         this.lastRow = key;
         this.quietT = 0;
       } else {
-        this.quietT = (this.quietT || 0) + SNAP_EVERY;
+        this.quietT = (this.quietT || 0) + STATE_EVERY;
       }
     }
     return Math.min(1, this.acc / STEP);
@@ -426,6 +466,7 @@ export class Multiplayer {
     }
     title.className = `stamp ${good ? "good" : "bad"}`;
     $("screen-result").className = `screen showbg ${good ? "mood-win" : "mood-lose"}`;
+    if (mine) this.ui.resultFanfare(good, final);
     $("btn-continue").classList.add("hidden");
     $("btn-result-quit").classList.add("hidden");
     const next = $("result-next");
@@ -483,6 +524,8 @@ export class Multiplayer {
       li.append(name, how);
       st.append(li);
     }
+    if (you.won) this.ui.resultFanfare(true, true);
+    else this.ui.sfx.showOver();
     $("btn-again").textContent = "Back to lobby";
     $("hud").classList.add("hidden");
     this.ui.showScreen("show");

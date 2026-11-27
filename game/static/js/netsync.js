@@ -10,6 +10,9 @@
 
 const SNAP_HZ = 30;
 export const SNAP_EVERY = 1 / SNAP_HZ;
+// Players report their own character 20 times a second (the host smooths the
+// gaps), which keeps the server light when the room is full.
+export const STATE_EVERY = 1 / 20;
 
 // Moving obstacles: the fields that change during a round.
 const DYNAMIC = {
@@ -24,9 +27,13 @@ const DYNAMIC = {
   pistons: ["cx", "vx"],
   popups: ["rise", "up"],
   cannons: ["aim", "flash"],
+  doors: ["broken", "known"],
+  ghosts: ["st", "t", "known"],
+  tilts: ["angle"],
 };
 // Fields that are never blended (counts and on/off states).
-const STEPPED = new Set(["arms", "active", "up"]);
+const STEPPED = new Set(["arms", "active", "up", "broken", "known", "st"]);
+const FLAGS = new Set(["active", "up", "broken", "known"]);
 // Fields the renderers interpolate from ("previous" copies): we set them equal
 // to the current value, because the Mirror already blends between snapshots.
 const PREVIOUS = {
@@ -94,6 +101,7 @@ export function makeSnapshot(world, index, events) {
     o,
     r: world.rollers.map((r) => [r.id, r1(r.x), r1(r.y), r1(r.vx), r1(r.vy), r.r, r3(r.rot)]),
     m: world.meteors.map((m) => [r1(m.x), r1(m.y), m.r, r3(m.t), m.T]),
+    lg: world.logs.map((l) => [l.id, r1(l.y), l.x0, l.x1, l.r, r3(l.rot), l.speed]),
     tl: tiles,
     f: world.finishers,
     res: world.result,
@@ -252,7 +260,8 @@ export class Mirror {
         const old = key === "movers" ? it.cx : key === "discs" ? it.angle : null;
         fields.forEach((f, k) => {
           if (c[k] === null) return; // not used by this obstacle
-          if (STEPPED.has(f)) it[f] = f === "arms" ? (u < 0.5 ? a[k] : c[k]) : !!(u < 0.5 ? a[k] : c[k]);
+          if (key === "doors") it[f] = it[f] || !!c[k]; // a door never closes again (and we may have opened it first)
+          else if (STEPPED.has(f)) it[f] = FLAGS.has(f) ? !!(u < 0.5 ? a[k] : c[k]) : (u < 0.5 ? a[k] : c[k]);
           else if (f === "aim") it[f] = lerpAngle(a[k], c[k], u);
           else it[f] = lerp(a[k], c[k], u);
         });
@@ -269,6 +278,12 @@ export class Mirror {
       return { id, x: bx, y: by, px: bx, py: by, vx, vy, r, rot: p ? lerp(p[6], rot, u) : rot, life: 1 };
     });
     w.meteors = near.m.map(([x, y, r, t, T]) => ({ x, y, r, t, T }));
+    const oldLogs = new Map((s0.lg || []).map((l) => [l[0], l]));
+    w.logs = (s1.lg || []).map(([id, y, x0, x1, r, rot, speed]) => {
+      const p = oldLogs.get(id);
+      const ly = p ? lerp(p[1], y, u) : y;
+      return { id, y: ly, py: ly, x0, x1, r, rot: p ? lerp(p[5], rot, u) : rot, speed };
+    });
 
     if (w.tiles) {
       // Use the older snapshot: a tile never vanishes under you before you see it go.
@@ -311,7 +326,7 @@ export class Mirror {
 export class RemoteTrack {
   constructor() {
     this.buf = [];
-    this.time = new Timeline(SNAP_EVERY);
+    this.time = new Timeline(STATE_EVERY);
     this.emitted = -Infinity;
   }
 

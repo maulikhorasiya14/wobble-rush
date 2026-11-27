@@ -23,6 +23,11 @@ class FakeConn:
         self.sim = None
         self.owner = None
         self.closed = False
+        self.dropped_at = None
+        self.save_path = save_path
+
+    def close(self, wait=False):
+        self.closed = True
 
     def send(self, msg, droppable=False, key=None):
         self.sent.append(json.loads(msg) if isinstance(msg, str) else msg)
@@ -273,3 +278,52 @@ def test_host_game_worker_attaches_and_runs_the_round(lobby, conn):
     lobby.disconnect(b)
     lobby.disconnect(worker)
     assert host.sim is None and host.room is not None
+
+
+def test_dropped_player_can_rejoin_the_round(lobby, conn):
+    code, host, (a, b) = make_room(lobby, conn, rounds=2)
+    say(lobby, host, t="start")
+    lobby.drop(a)                       # Wi-Fi blip: socket gone
+    assert a.room is not None and "left" not in host.kinds()
+    back = conn()
+    say(lobby, back, t="resume", id=a.id, secret=a.secret)
+    assert back.last("joined")["you"] == a.id and back.last("joined")["resumed"] is True
+    assert back.last("round")["index"] == 0
+    assert any(p["id"] == a.id for p in host.last("room")["players"])
+    # Their reports reach the host again.
+    say(lobby, back, t="state", at=1.0, s=[1, 2], ev=[])
+    assert host.last("state")["id"] == a.id
+
+
+def test_wrong_secret_cannot_take_a_place(lobby, conn):
+    code, host, (a,) = make_room(lobby, conn, people=2)
+    lobby.drop(a)
+    thief = conn()
+    say(lobby, thief, t="resume", id=a.id, secret="nope")
+    assert "can't rejoin" in thief.last("error")["message"]
+
+
+def test_dropped_player_is_removed_after_the_grace_period(lobby, conn):
+    from game.multiplayer import RESUME_GRACE
+    code, host, (a, b) = make_room(lobby, conn, rounds=2)
+    say(lobby, host, t="start")
+    lobby.drop(a)
+    assert lobby.reap(now=a.dropped_at + 1) == []
+    assert lobby.reap(now=a.dropped_at + RESUME_GRACE + 1) == [a]
+    assert host.last("left") == {"t": "left", "id": a.id}
+
+
+def test_host_drop_hands_over_after_a_short_wait(lobby, conn):
+    from game.multiplayer import HOST_RESUME_GRACE
+    code, host, (a, b) = make_room(lobby, conn, rounds=2)
+    say(lobby, host, t="start")
+    lobby.drop(host)
+    lobby.reap(now=host.dropped_at + HOST_RESUME_GRACE + 1)
+    assert a.last("round")["host"] == a.id
+
+
+def test_snapshots_are_relayed_without_decoding(lobby, conn):
+    code, host, (a, b) = make_room(lobby, conn, rounds=2)
+    say(lobby, host, t="start")
+    lobby.handle(host, '{"t":"snap","i":0,"b":[]}')
+    assert a.last("snap") == {"t": "snap", "i": 0, "b": []}

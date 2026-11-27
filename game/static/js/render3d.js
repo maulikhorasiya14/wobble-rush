@@ -829,11 +829,19 @@ export class Renderer3D {
     this.popupViews = [];
     this.cannonViews = [];
     this.meteorViews = [];
+    this.doorViews = [];
+    this.ghostViews = [];
+    this.tiltViews = [];
+    this.logViews = [];
+    this.doorMats = null;
 
     const sky = this._own(makeSky(th));
     scene.add(sky);
     this.sky = sky;
-    scene.fog = new THREE.Fog(new THREE.Color(th.sky[1]), 90, 420);
+    // Races: the haze closes in well before the finish (courses are 9,000+ px),
+    // so the finish line stays a surprise until you get near it.
+    const race = world.level.type === "race";
+    scene.fog = new THREE.Fog(new THREE.Color(th.sky[1]), race ? 70 : 90, race ? 330 : 420);
     scene.environment = this._envFor(th);
 
     const hemi = new THREE.HemisphereLight(new THREE.Color(th.sky[0]).lerp(new THREE.Color(0xffffff), 0.5), new THREE.Color(th.sea), 0.65);
@@ -887,6 +895,9 @@ export class Renderer3D {
     this.pistonViews = world.pistons.map((p) => this._buildPiston(p));
     this.popupViews = world.popups.map((p) => this._buildPopup(p));
     this.cannonViews = world.cannons.map((c) => this._buildCannon(c));
+    this.doorViews = world.doors.map((d) => this._buildDoor(d));
+    this.ghostViews = world.ghosts.map((g) => this._buildGhost(g, th));
+    this.tiltViews = world.tilts.map((t) => this._buildTilt(t, th));
 
     this.chars = new Map();
     for (const b of world.bodies) {
@@ -901,6 +912,53 @@ export class Renderer3D {
     this._own(this.particles.conf);
     this.static.traverse((o) => { o.matrixAutoUpdate = false; o.updateMatrix(); });
     this._snapCamera = true;
+    this._collectCullables(world);
+  }
+
+  /**
+   * Things that sit fully inside the fog are hidden instead of drawn: fogged
+   * objects turn the flat fog colour, and against the sky's gradient their
+   * outline would still show (a pale "ghost" finish arch on the horizon).
+   */
+  _collectCullables(world) {
+    this.cull = [];
+    if (world.level.type !== "race") return;
+    const box = new THREE.Box3(), sphere = new THREE.Sphere();
+    // Characters and rolling balls set their own visibility each frame (see _inSight).
+    const skip = new Set([this.sky, this.sea, this.particles?.puffs, this.particles?.conf, ...this.rollerViews,
+      ...this.doorViews.map((v) => v.m), ...this.ghostViews.map((v) => v.m)]);
+    for (const c of this.chars.values()) { skip.add(c.root); skip.add(c.shadow); }
+    const add = (o, moving) => {
+      if (skip.has(o) || o.isLight || o.isCamera) return;
+      box.setFromObject(o);
+      if (box.isEmpty()) return;
+      box.getBoundingSphere(sphere);
+      if (sphere.radius > 120) return; // long floors: flat, they fade into the horizon anyway
+      const local = moving ? sphere.center.clone().sub(o.getWorldPosition(new THREE.Vector3())) : null;
+      this.cull.push({ o, center: moving ? null : sphere.center.clone(), local, r: sphere.radius + (moving ? 15 : 0) });
+    };
+    for (const o of this.static.children) add(o, false);
+    for (const o of this.scene.children) if (o !== this.static) add(o, true);
+    this.cullT = 0;
+  }
+
+  /** Is world point (x, y) closer than the fog's far edge? (Races only.) */
+  _inSight(x, y) {
+    if (!this.cull?.length || !this.scene.fog) return true;
+    const cam = this.camera.position;
+    return Math.hypot(x * S - cam.x, y * S - cam.z) < this.scene.fog.far + 3;
+  }
+
+  _cullFar(dt) {
+    if (!this.cull?.length || !this.scene.fog) return;
+    this.cullT -= dt;
+    if (this.cullT > 0) return;
+    this.cullT = 0.2;
+    const cam = this.camera.position, far = this.scene.fog.far, p = new THREE.Vector3();
+    for (const c of this.cull) {
+      const at = c.center || c.o.getWorldPosition(p).add(c.local);
+      c.o.visible = at.distanceTo(cam) - c.r < far;
+    }
   }
 
   _envFor(th) {
@@ -1081,8 +1139,8 @@ export class Renderer3D {
     const banner = new THREE.Mesh(
       new THREE.BoxGeometry(bw, 1.8, 0.4),
       [null, null, null, null, null, null].map((_, i) => (i === 4 || i === 5)
-        ? new THREE.MeshStandardMaterial({ map: bannerTexture("FINISH", "#ffd23f", "#5a2a00"), roughness: 0.4 })
-        : new THREE.MeshStandardMaterial({ color: 0xffb800, roughness: 0.4 })),
+        ? new THREE.MeshStandardMaterial({ map: bannerTexture("FINISH", "#ff4fa0", "#ffffff"), roughness: 0.4 })
+        : new THREE.MeshStandardMaterial({ color: 0xff4fa0, roughness: 0.4 })),
     );
     banner.position.set(((x0 + x1) / 2) * S, 6.4, fy * S);
     banner.castShadow = true;
@@ -1433,6 +1491,70 @@ export class Renderer3D {
     return { turret, rim };
   }
 
+  // ---- mystery doors, trust tiles, tilting platforms, logs
+
+  _buildDoor(d) {
+    const H = 3.4;
+    if (!this.doorMats) {
+      const side = new THREE.MeshPhysicalMaterial({ color: 0x6c3cff, roughness: 0.35, clearcoat: 0.8 });
+      const face = new THREE.MeshPhysicalMaterial({ map: bannerTexture("?", "#b47cff", "#ffffff"), roughness: 0.35, clearcoat: 0.6 });
+      const xSide = new THREE.MeshPhysicalMaterial({ color: 0xc2185b, roughness: 0.35, clearcoat: 0.8 });
+      const xFace = new THREE.MeshPhysicalMaterial({ map: bannerTexture("\u2716", "#ff8fab", "#a3163a"), roughness: 0.35, clearcoat: 0.6 });
+      this.doorMats = { normal: [side, side, side, side, face, face], known: [xSide, xSide, xSide, xSide, xFace, xFace] };
+    }
+    const m = new THREE.Mesh(new THREE.BoxGeometry(d.w * S, H, Math.max(d.h * S, 0.6)), this.doorMats.normal);
+    m.position.set((d.x + d.w / 2) * S, H / 2, (d.y + d.h / 2) * S);
+    m.castShadow = m.receiveShadow = true;
+    this.scene.add(this._own(m));
+    return { m, known: false };
+  }
+
+  _buildGhost(g, th) {
+    const geo = slabGeometry(g.x, g.y, g.w, g.h, 1.0, 0.5, 0.15);
+    const base = g.kind === "crumble" ? 0xf1e4c6 : 0xe8f2ff;
+    const top = new THREE.MeshPhysicalMaterial({ color: base, roughness: 0.25, clearcoat: 0.9, emissive: 0x000000 });
+    const side = new THREE.MeshStandardMaterial({ color: th.side, roughness: 0.55 });
+    const m = new THREE.Mesh(geo, [top, side]);
+    m.receiveShadow = m.castShadow = true;
+    this.scene.add(this._own(m));
+    return { m, top, base, drop: 0 };
+  }
+
+  _buildTilt(t, th) {
+    const g = new THREE.Group();
+    g.position.set((t.x + t.w / 2) * S, 0, (t.y + t.h / 2) * S);
+    const tex = floorTexture(th.floorA, th.floorB);
+    tex.repeat.set(1 / 6, 1 / 6);
+    const slab = new THREE.Mesh(slabGeometry(-t.w / 2, -t.h / 2, t.w, t.h, 1.2), [
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.42 }),
+      new THREE.MeshPhysicalMaterial({ color: 0xb47cff, roughness: 0.35, clearcoat: 0.6 }),
+    ]);
+    slab.receiveShadow = slab.castShadow = true;
+    // A pivot post under the middle shows what it rocks on.
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.8, 8, 16),
+      new THREE.MeshStandardMaterial({ color: 0x6c5fa0, roughness: 0.5 }));
+    post.position.y = -5.2;
+    g.add(slab, post);
+    this.scene.add(this._own(g));
+    return { g, slab };
+  }
+
+  _logView(i) {
+    if (!this.logViews[i]) {
+      const tex = stripeTexture("#b5733f", "#9a5f30");
+      tex.repeat.set(6, 1);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 24),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 }));
+      body.rotation.z = Math.PI / 2;
+      body.castShadow = true;
+      const g = new THREE.Group();
+      g.add(body);
+      this.scene.add(this._own(g));
+      this.logViews[i] = { g, body };
+    }
+    return this.logViews[i];
+  }
+
   _meteorView(i) {
     if (!this.meteorViews[i]) {
       const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 1),
@@ -1507,6 +1629,42 @@ export class Renderer3D {
       v.turret.rotation.y = -c.aim;
       v.rim.material.emissiveIntensity = c.flash * 2.5;
     });
+    world.doors.forEach((d, i) => {
+      const v = this.doorViews[i];
+      v.m.visible = !d.broken && this._inSight(d.x, d.y);
+      if (d.known && !v.known) { v.known = true; v.m.material = this.doorMats.known; }
+    });
+    world.ghosts.forEach((g, i) => {
+      const v = this.ghostViews[i];
+      if (g.st === 2) {
+        // Drop away, then hide (crumble tiles come back later).
+        v.drop = Math.min(v.drop + dt * 18, 30);
+        v.m.position.y = -v.drop;
+        v.m.visible = v.drop < 29;
+        return;
+      }
+      v.drop = 0;
+      v.m.visible = this._inSight(g.x, g.y);
+      const shake = g.st === 1 ? Math.sin(clock * 70) * 0.12 : 0;
+      v.m.position.set(shake, 0, 0);
+      v.top.color.setHex(g.st === 1 ? 0xffb366 : g.known ? 0x9df5c9 : v.base);
+      v.top.emissive.setHex(g.known ? 0x1f8a5a : 0x000000);
+      v.top.emissiveIntensity = g.known ? 0.35 : 0;
+    });
+    world.tilts.forEach((t, i) => {
+      this.tiltViews[i].g.rotation.z = -t.angle * 0.24;
+    });
+    for (let i = 0; i < Math.max(world.logs.length, this.logViews.length); i++) {
+      const lg = world.logs[i];
+      if (!lg && !this.logViews[i]) continue;
+      const v = this._logView(i);
+      v.g.visible = !!lg && this._inSight((lg.x0 + lg.x1) / 2, lg.y);
+      if (!lg) continue;
+      const y = lerp(lg.py ?? lg.y, lg.y, alpha);
+      v.body.scale.set(lg.r * S, (lg.x1 - lg.x0) * S, lg.r * S);
+      v.g.position.set(((lg.x0 + lg.x1) / 2) * S, lg.r * S, y * S);
+      v.g.rotation.x = -lg.rot;
+    }
     for (let i = 0; i < Math.max(world.meteors.length, this.meteorViews.length); i++) {
       const m = world.meteors[i];
       if (!m && !this.meteorViews[i]) continue;
@@ -1519,6 +1677,21 @@ export class Renderer3D {
       v.ring.material.opacity = 0.5 + Math.sin(clock * 14) * 0.3;
       v.rock.position.set(m.x * S + (1 - k) * 12, 1.4 + (1 - k) * (1 - k) * 40, m.y * S - (1 - k) * 8);
       v.rock.rotation.set(clock * 3, clock * 2, 0);
+    }
+    // Snowy rounds: flakes drift down over the arena, blown by the gusts.
+    if (world.level.theme.snow && Math.random() < 0.9) {
+      const gust = world.zones.find((z) => z.type === "gust");
+      const wx = gust && gust.active && Number.isFinite(gust.fx) ? gust.fx * S * 2.5 : 0.6;
+      const wz = gust && gust.active && Number.isFinite(gust.fy) ? gust.fy * S * 2.5 : 0;
+      const L = world.level;
+      for (let k = 0; k < 3; k++) {
+        // Low over the arena, where the sun lights them (high up they'd show their dark undersides).
+        const h = 1.2 + Math.random() * 5;
+        this.particles.emit({
+          x: Math.random() * L.bounds.w * S, y: h, z: Math.random() * L.bounds.h * S,
+          vx: wx, vy: -1.6, vz: wz, life: h / 1.6, size: 0.1, color: 0xffffff, drag: 0,
+        });
+      }
     }
     for (const v of this.zoneViews) {
       if (v.z.type === "gust") {
@@ -1577,7 +1750,7 @@ export class Renderer3D {
       const r = world.rollers[i];
       const v = r || this.rollerViews[i] ? this._rollerView(i) : null;
       if (!v) continue;
-      v.visible = !!r;
+      v.visible = !!r && this._inSight(r.x, r.y);
       if (!r) continue;
       v.scale.setScalar(r.r * S);
       v.position.set(lerp(r.px ?? r.x, r.x, alpha) * S, r.r * S, lerp(r.py ?? r.y, r.y, alpha) * S);
@@ -1608,10 +1781,11 @@ export class Renderer3D {
       const hidden = b.hidden || b.eliminated;
       if (hidden && !c.anim.wasHidden && b.hidden) this.particles.confetti(c.root.position, 14);
       c.anim.wasHidden = hidden;
-      c.root.visible = !hidden;
-      c.shadow.visible = !hidden;
-      if (hidden) continue;
       const x = lerp(b.px ?? b.x, b.x, alpha), y = lerp(b.py ?? b.y, b.y, alpha), z = lerp(b.pz ?? b.z, b.z, alpha);
+      const show = !hidden && this._inSight(x, y);
+      c.root.visible = show;
+      c.shadow.visible = show;
+      if (hidden) continue;
       animateCharacter(c, b, x, y, z, dt, clock, world.P);
       // Splash into the sea
       if (b.falling && !c.anim.splashed && c.root.position.y < SEA_Y + 0.5) {
@@ -1693,8 +1867,11 @@ export class Renderer3D {
         case "cannon": P.burst({ ...pos, y: 1.6 }, 10, 0xffffff, 3, 0.5, 0.2, { vy: 2, grow: 1.2 }); break;
         case "pad": P.burst({ ...pos, y: 0.6 }, 14, 0x3dffb8, 3, 0.5, 0.12, { vy: 4, g: 6 }); break;
         case "respawn": P.burst({ ...pos, y: 1 }, 14, 0xbfe8ff, 3, 0.5, 0.12, { vy: 2 }); break;
+        case "door": P.confetti({ ...pos, y: 1.6 }, 24); break;
+        case "bonk": P.burst({ ...pos, y: 1.6 }, 8, 0xff8fab, 3, 0.4, 0.14, { vy: 2 }); break;
+        case "crack": P.burst({ ...pos, y: 0.2 }, 6, 0xffb366, 2, 0.4, 0.12, { vy: 1.5 }); break;
         case "tile": {
-          const col = world.level.theme.crack;
+          const col = world.level.theme.crack ?? 0xc9b48a;
           P.burst({ ...pos, y: -0.2 }, 6, col, 2, 0.7, 0.25, { vy: 1, g: 14 });
           break;
         }
@@ -1784,8 +1961,25 @@ export class Renderer3D {
   /** Mouse look: turn the orbit camera (360 degrees round) and tilt it. */
   addLook(dx, dy) {
     if (this.mode !== "play") return;
-    this.camYaw += dx * this.lookSpeed;
-    this.camPitch = clamp(this.camPitch + dy * this.lookSpeed, -0.12, 1.25);
+    const k = this.lookSpeed * (this.sensitivity ?? 1);
+    this.camYaw += dx * k;
+    this.camPitch = clamp(this.camPitch + dy * k * (this.invertY ? -1 : 1), -0.12, 1.25);
+  }
+
+  /**
+   * Player settings: mouse sensitivity, invert Y, and graphics quality
+   * ("auto" adapts resolution to keep frames smooth, "high" always renders
+   * sharp, "low" renders at reduced resolution for slower computers).
+   */
+  applySettings({ sensitivity = 1, invertY = false, quality = "auto" } = {}) {
+    this.sensitivity = sensitivity;
+    this.invertY = invertY;
+    this.quality = quality;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.maxRatio = quality === "low" ? Math.min(dpr, 0.8) : dpr;
+    this.ratio = quality === "high" ? dpr : Math.min(this.maxRatio, quality === "low" ? 0.8 : 1.25);
+    this.badRatio = Infinity;
+    this.needsResize = true;
   }
 
   /** Mouse wheel: move the camera closer or further away. */
@@ -1838,6 +2032,7 @@ export class Renderer3D {
     this._sync(world, alpha, dt);
     this._handleEvents(world);
     this._updateCamera(world, followId, dt, alpha);
+    this._cullFar(dt);
     this.particles.update(dt);
     this.gl.render(this.scene, this.camera);
     this._adapt(dt);
@@ -1856,7 +2051,7 @@ export class Renderer3D {
    * (Switching back and forth every few seconds causes visible hitches.)
    */
   _adapt(dt) {
-    if (dt <= 0) return;
+    if (dt <= 0 || this.quality === "high" || this.quality === "low") return;
     const now = performance.now();
     // One-off hitches (switching windows, a round loading, a hidden tab coming
     // back) say nothing about how fast this computer draws: skip them, and

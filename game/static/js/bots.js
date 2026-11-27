@@ -83,7 +83,7 @@ export function botIntent(b, w, dt) {
       }
     }
     if (!bar) br.engaged = false;
-    if (bar || gapAhead(b, w, br)) it.jump = true;
+    if (bar || gapAhead(b, w, br) || logAhead(b, w, br)) it.jump = true;
   } else if (b.z > 0 && !b.diving && b.vz < 60 && shouldDive(b, w)) {
     it.dive = true;
   }
@@ -112,6 +112,17 @@ function trackStuck(b, w, br, dt) {
 function goalPoint(b, w, br) {
   const L = w.level;
   if (w.type === "race") {
+    // Trust tiles: once a safe tile in the next row up is known, head straight for it.
+    if (w.ghosts.length) {
+      let best = null;
+      for (const g of w.ghosts) {
+        if (g.kind !== "trust" || !g.known || g.st === 2) continue;
+        const gy = g.y + g.h / 2, ahead = b.y - gy;
+        if (ahead < 25 || ahead > 220) continue;
+        if (!best || ahead < best.ahead) best = { x: g.x + g.w / 2, y: gy, ahead };
+      }
+      if (best) return { x: best.x, y: best.y };
+    }
     for (const wp of L.waypoints || []) {
       if (wp.y < b.y - 30) return { x: wp.x + br.offset * wp.spread, y: wp.y };
     }
@@ -199,6 +210,11 @@ function steer(b, w, br) {
         break;
       }
       if (w.solidAt(px, py, d / 200)) s -= 1.6 * weight;
+      // Trust tiles: follow tiles already shown to be safe; be wary of untried ones.
+      if (w.ghosts.length) {
+        const g = w.ghostAt(px, py);
+        if (g && g.kind === "trust") s += g.known ? 0.9 * weight : -0.35 * weight;
+      }
       if (A) {
         const rr = Math.hypot(px - A.x, py - A.y) / w.arenaR;
         if (rr > 0.78) s -= (rr - 0.78) * 8;
@@ -266,6 +282,18 @@ function shouldDive(b, w) {
   const dive = landingPoint(b, P, b.fx * sp, b.fy * sp, Math.max(b.vz, P.dive_hop));
   const slide = sp / P.slide_friction;
   return w.safeAt(dive.x, dive.y, 0.5) && w.safeAt(dive.x + b.fx * slide, dive.y + b.fy * slide, 0.8);
+}
+
+/** A rolling log about to reach us: time the jump so we're in the air as it passes. */
+function logAhead(b, w, br) {
+  for (const lg of w.logs) {
+    if (b.x < lg.x0 - 10 || b.x > lg.x1 + 10) continue;
+    const dist = b.y - lg.y - lg.r - w.R;
+    if (dist < -lg.r) continue;
+    const t = dist / (lg.speed + Math.max(0, -b.vy));
+    if (t < br.lead * 0.9 + 0.05) return true;
+  }
+  return false;
 }
 
 function spinnerThreat(b, w, br) {

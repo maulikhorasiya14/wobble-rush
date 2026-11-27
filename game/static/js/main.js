@@ -2,6 +2,8 @@
 import { api } from "./api.js";
 import { Input } from "./input.js";
 import { Multiplayer } from "./mp.js";
+import { music } from "./music.js";
+import { setMusicVolume, setVolume, sfx } from "./sfx.js";
 import { Renderer, drawBlob } from "./render.js";
 import { CharacterPreview, Renderer3D, webglAvailable } from "./render3d.js";
 import { World } from "./world.js";
@@ -9,8 +11,9 @@ import { World } from "./world.js";
 const STEP = 1 / 120;
 const $ = (id) => document.getElementById(id);
 // Screens with a big card over the game, where the background can be drawn less often.
-const COVERED_SCREENS = new Set(["first", "howto", "records", "show", "tutdone", "pause", "mp", "lobby"]);
-const SCREENS = ["menu", "first", "howto", "records", "intro", "result", "show", "tutdone", "pause", "mp", "lobby"];
+const COVERED_SCREENS = new Set(["first", "howto", "records", "show", "tutdone", "pause", "mp", "lobby", "settings", "rounds"]);
+const SCREENS = ["menu", "first", "howto", "records", "intro", "result", "show", "tutdone", "pause", "mp", "lobby",
+  "settings", "rounds"];
 
 // Graphics: 3D (three.js) by default, classic 2D when chosen or when WebGL is missing.
 const GRAPHICS_KEY = "wobble.graphics";
@@ -33,6 +36,22 @@ function makeRenderer() {
 }
 makeRenderer();
 const input = new Input();
+
+// ---- player settings (saved in this browser)
+const SETTINGS_KEY = "wobble.settings";
+const settings = { volume: 0.7, music: 0.5, sensitivity: 1, invertY: false, quality: "auto", showFps: false };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); } catch { /* defaults */ }
+function applySettings() {
+  setVolume(settings.volume);
+  setMusicVolume(settings.music);
+  renderer.applySettings?.(settings);
+  document.getElementById("fps").classList.toggle("hidden", !settings.showFps);
+}
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  applySettings();
+}
+applySettings();
 
 const app = {
   data: null,
@@ -127,6 +146,7 @@ async function boot() {
       renderer.draw(app.world, followId(), app.paused ? 0 : app.drawDt, alpha);
       app.drawDt = 0;
     }
+    updateMusic();
     updateFps(dt);
   };
   requestAnimationFrame(loop);
@@ -435,6 +455,7 @@ function showIntro() {
   $("btn-ready").classList.remove("hidden");
   $("btn-intro-quit").classList.remove("hidden");
   showScreen("intro");
+  sfx.introSting();
   armSpace(beginRound);
 }
 
@@ -453,6 +474,44 @@ function fillIntro(lvl, cfg, roster) {
   const row = $("intro-players");
   row.innerHTML = "";
   for (const p of roster) row.append(playerIcon(p, "big"));
+  fillCourse($("intro-course"), lvl);
+}
+
+const SECTION_ICONS = {
+  "Spinner field": "\u{1F300}", "Spinner forest": "\u{1F332}", "Giant sweeper": "\u{1F9F9}", "Spinner bridge": "\u{1F309}",
+  "Mystery doors": "\u{1F6AA}", "Trust tiles": "\u2754", "Crumble bridge": "\u{1F9F1}", "Tilting platforms": "\u2696\uFE0F",
+  "Log hurdles": "\u{1FAB5}", "Cannon alley": "\u{1F4A3}", "Shifting gates": "\u{1F6A7}", "Hammer hops": "\u{1F528}",
+  "Hammer walk": "\u{1F528}", "Hammer gauntlet": "\u{1F528}", "Giant hammers": "\u{1F528}", "Belt islands": "\u{1F3DD}\uFE0F",
+  "Belt sprint": "\u23E9", "Belt bridges": "\u{1F6E4}\uFE0F", "Conveyor lanes": "\u2195\uFE0F", "Cross belts": "\u2194\uFE0F", "Express bridge": "\u23EB",
+  "Twister discs": "\u{1F32A}\uFE0F", "Turntables": "\u{1F504}", "Big wheels": "\u{1F3A1}", "Snow bridge": "\u2744\uFE0F",
+  "Snowball slope": "\u26C4", "Gust gauntlet": "\u{1F4A8}", "Wind path": "\u{1F4A8}", "Windy islands": "\u{1F32C}\uFE0F",
+  "Piston corridor": "\u{1F529}", "Piston plaza": "\u{1F529}", "Piston gauntlet": "\u{1F529}", "Pop-up blocks": "\u{1F7E7}",
+  "Pinball lane": "\u{1F3AF}", "Bumper maze": "\u{1F3AF}", "Island hops": "\u{1F3DD}\uFE0F", "Zig-zag platforms": "\u3030\uFE0F",
+  "Stepping stones": "\u{1FAA8}", "Split path": "\u{1F500}", "Sliding walls": "\u{1F9CA}", "Bounce pads": "\u{1F680}",
+  "Bounce chain": "\u{1F680}", "Pad sprint": "\u{1F680}", "Drifting lifts": "\u{1F6D7}", "Speedy lifts": "\u{1F6D7}",
+  "Snowball": "\u26C4",
+};
+
+/** A strip of the course's sections, in order (races only). */
+function fillCourse(box, lvl) {
+  box.innerHTML = "";
+  const parts = (lvl.sections || []).filter((n) => n !== "Start" && n !== "Finish");
+  box.classList.toggle("hidden", !parts.length);
+  parts.forEach((name, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.animationDelay = `${0.4 + i * 0.05}s`;
+    const icon = document.createElement("i");
+    icon.textContent = SECTION_ICONS[name] || "\u2B50";
+    chip.append(icon, name);
+    box.append(chip);
+    if (i < parts.length - 1) {
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      arrow.textContent = "\u203A";
+      box.append(arrow);
+    }
+  });
 }
 
 /** Is this player the person at this computer? */
@@ -474,6 +533,7 @@ function wipe(fn) {
   if (app.wiping) return;
   app.wiping = true;
   setTimeout(() => { app.wiping = false; }, 900);
+  sfx.swoosh();
   const el = $("wipe");
   el.classList.remove("go");
   void el.offsetWidth;
@@ -514,6 +574,7 @@ function enterPlay(mode, lvl, roundLabel) {
   $("hud-players").dataset.key = "";
   $("hud-status").textContent = "";
   $("hud-round").textContent = roundLabel;
+  app.lastSection = null;
   const look = graphics === "3d" ? " \u00b7 Mouse look \u00b7 Wheel zoom" : "";
   $("hud-keys").textContent = `WASD move${look} \u00b7 SPACE jump \u00b7 SHIFT dive \u00b7 `
     + (app.mp ? "ESC menu (the game keeps going)" : "ESC pause");
@@ -531,14 +592,20 @@ function tick(dt) {
   // Countdown banner
   if (w.status === "countdown") {
     const n = Math.ceil(w.countdown);
-    if (n !== app.lastCount) { app.lastCount = n; banner(String(n)); }
+    if (n !== app.lastCount) {
+      app.lastCount = n;
+      if (n <= 3) { banner(String(n)); sfx.beep(); }
+    }
   }
   // Your own clock stops when you cross the line.
   $("hud-timer").textContent = formatTime(w.human?.finished && !w.tutorial ? w.human.finishTime : w.time);
   setStatus(w);
   updatePlayersBar(w);
+  updatePlace(w);
 
   if (app.mode === "tutorial") updateTip(w);
+  updateSection(w);
+  if (!app.paused) ambientSounds(w);
   updateLookHint();
 
   if (w.status === "ended") {
@@ -556,6 +623,48 @@ function tick(dt) {
       else showRoundResult();
     }
   }
+}
+
+/** Live race position: "4th of 12" (finishers in order, then whoever is furthest along). */
+function updatePlace(w) {
+  const el = $("hud-place");
+  const me = w.bodies.find((b) => b.id === followId());
+  if (w.type !== "race" || w.tutorial || !me || me.eliminated) { el.classList.add("hidden"); return; }
+  let place;
+  const fin = w.finishers.indexOf(me.id);
+  if (fin >= 0) place = fin + 1;
+  else place = w.finishers.length + 1 + w.bodies.filter((b) => b !== me && !b.finished && !b.eliminated && b.y < me.y).length;
+  const n = w.bodies.filter((b) => !b.eliminated || b.finished).length;
+  const text = `${ordinal(place)} of ${n}`;
+  if (el.textContent !== text) {
+    const up = app.lastPlace && place < app.lastPlace;
+    el.textContent = text;
+    el.classList.remove("hidden", "up");
+    if (up) { void el.offsetWidth; el.classList.add("up"); }
+    el.classList.toggle("safe", place <= w.qualify);
+    app.lastPlace = place;
+  }
+}
+
+function ordinal(n) {
+  const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+  return n + s;
+}
+
+/** "Section 4 of 12 · Zig-zag platforms" as you reach each part of a race. */
+function updateSection(w) {
+  const el = $("hud-section");
+  const spans = w.level.section_spans;
+  const me = w.bodies.find((b) => b.id === followId());
+  if (!spans || !me || w.status === "countdown") { el.classList.add("hidden"); app.lastSection = null; return; }
+  const i = spans.findIndex((s) => me.y >= s.y0 && me.y <= s.y1);
+  if (i < 0 || i === app.lastSection) return;
+  app.lastSection = i;
+  el.textContent = `Section ${i + 1} of ${spans.length} \u00b7 ${spans[i].name}`;
+  el.classList.remove("hidden");
+  el.style.animation = "none";
+  void el.offsetWidth;
+  el.style.animation = "";
 }
 
 function setStatus(w) {
@@ -623,6 +732,7 @@ function handleEvents(events) {
   if (app.mode !== "play" && app.mode !== "tutorial") return;
   const hid = app.world.human?.id;
   const byId = (id) => app.world.bodies.find((b) => b.id === id);
+  playSounds(events);
   for (const e of events) {
     if (app.mode === "tutorial" && e.id === hid && ["jump", "dive", "checkpoint"].includes(e.type)) app.tutSkills?.add(e.type);
     if (app.mode === "play" && (e.type === "finish" || e.type === "eliminated" || e.type === "left")) {
@@ -649,6 +759,125 @@ function handleEvents(events) {
       if (app.world.type !== "race" || !q) banner(q ? (app.world.qualify === 1 ? "Winner!" : "Survived!") : "Eliminated!", q ? "" : "bad");
     }
   }
+}
+
+/** Sounds for what happens to the character you follow, and loud things nearby. */
+const OWN_SOUNDS = ["jump", "dive", "land", "hit", "bump", "pad", "fall", "respawn", "checkpoint", "lifelost"];
+const NEAR_SOUNDS = ["door", "bonk", "crack", "tile", "cannon"];
+function playSounds(events) {
+  const fid = followId();
+  const me = app.world.bodies.find((b) => b.id === fid);
+  for (const e of events) {
+    if (e.type === "go") sfx.go();
+    else if (e.id === fid && OWN_SOUNDS.includes(e.type)) sfx[e.type]();
+    else if (e.id === fid && e.type === "finish") sfx.qualified();
+    else if (e.id === fid && e.type === "eliminated") sfx.eliminated();
+    else if (NEAR_SOUNDS.includes(e.type) && me && Math.hypot(e.x - me.x, e.y - me.y) < 650) sfx[e.type]();
+  }
+}
+
+// ---- music and ambient sound
+
+/** Which music fits right now (null = quiet, e.g. during the intro and countdown). */
+function desiredTrack() {
+  const m = app.mode, w = app.world;
+  if (m === "menu" || m === "lobby") return "menu";
+  if (m === "play" || m === "tutorial") {
+    if (!w || w.status !== "running") return null;
+    if (m === "tutorial") return "menu";
+    if (w.qualify === 1 && w.type !== "race") return "final";
+    return w.type === "race" ? "race" : "survival";
+  }
+  if (m === "result" && app.screen === "show") return "menu";
+  return null;
+}
+
+function updateMusic() {
+  const want = app.paused ? null : desiredTrack();
+  if (want !== music.name) {
+    if (want) music.play(want);
+    else music.stop();
+  }
+}
+
+const TAU2 = Math.PI * 2;
+const nearState = new Map();
+let nearWorld = null;
+/** True the moment something comes close (not every frame while it stays close). */
+function cameClose(key, isNear) {
+  const was = nearState.get(key);
+  nearState.set(key, isNear);
+  return isNear && !was;
+}
+
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
+  const u = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+  return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
+}
+
+/** Footsteps for the character you follow, and obstacles swishing past close by. */
+function ambientSounds(w) {
+  if (w !== nearWorld) { nearWorld = w; nearState.clear(); }
+  const me = w.bodies.find((b) => b.id === followId());
+  if (!me || me.eliminated || w.status !== "running") return;
+  const sp = Math.hypot(me.vx, me.vy);
+  if (me.z <= 0 && !me.falling && sp > 80) {
+    const phase = Math.floor((me.walk * 2) / Math.PI);
+    if (phase !== app.stepPhase) { app.stepPhase = phase; sfx.step(); }
+  }
+  w.spinners.forEach((s, k) => {
+    let close = false;
+    if (Math.abs(s.x - me.x) < s.arm + 90 && Math.abs(s.y - me.y) < s.arm + 90) {
+      for (let a = 0; a < s.arms; a++) {
+        const ang = s.angle + (a * TAU2) / s.arms;
+        if (segDist(me.x, me.y, s.x, s.y, s.x + Math.cos(ang) * s.arm, s.y + Math.sin(ang) * s.arm) < 75) close = true;
+      }
+    }
+    if (cameClose(`s${k}`, close)) sfx.whoosh(Math.min(1.6, 0.7 + Math.abs(s.omega) * 0.3));
+  });
+  w.pendulums.forEach((p, k) => {
+    if (cameClose(`p${k}`, Math.hypot(p.bx - me.x, p.y - me.y) < p.r + 110)) sfx.swing();
+  });
+  w.sliders.forEach((s, k) => {
+    if (cameClose(`w${k}`, Math.abs(s.cx - me.x) < s.w / 2 + 50 && Math.abs(s.y - me.y) < 70)) sfx.slide();
+  });
+  w.pistons.forEach((p, k) => {
+    if (cameClose(`k${k}`, Math.abs(p.vx) > 200 && Math.abs(p.y - me.y) < 160 && Math.abs(p.cx - me.x) < 260)) sfx.piston();
+  });
+  for (const lg of w.logs) {
+    if (cameClose(`l${lg.id}`, Math.abs(lg.y - me.y) < 220 && me.x > lg.x0 - 20 && me.x < lg.x1 + 20)) sfx.roll();
+  }
+  for (const r of w.rollers) {
+    if (cameClose(`r${r.id}`, Math.hypot(r.x - me.x, r.y - me.y) < 200)) sfx.roll();
+  }
+}
+
+/** Confetti over the screen when you qualify or win. */
+function celebrate(big = false) {
+  const box = $("celebrate");
+  box.innerHTML = "";
+  const colors = ["#ff5fa2", "#ffd23f", "#3ddc97", "#5b8cff", "#b47cff", "#ff8c42", "#40d9ff"];
+  const n = big ? 120 : 60;
+  for (let i = 0; i < n; i++) {
+    const p = document.createElement("i");
+    p.style.left = `${Math.random() * 100}%`;
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = `${Math.random() * (big ? 1.2 : 0.6)}s`;
+    p.style.animationDuration = `${1.8 + Math.random() * 1.6}s`;
+    p.style.setProperty("--drift", `${(Math.random() - 0.5) * 30}em`);
+    p.style.setProperty("--spin", `${(Math.random() - 0.5) * 1440}deg`);
+    box.append(p);
+  }
+  clearTimeout(celebrate.t);
+  celebrate.t = setTimeout(() => { box.innerHTML = ""; }, 4500);
+}
+
+/** The result card's sound and confetti. */
+function resultFanfare(good, final) {
+  if (good && final) { sfx.crown(); celebrate(true); }
+  else if (good) { sfx.qualified(); celebrate(false); }
+  else sfx.eliminated();
 }
 
 function banner(text, cls = "") {
@@ -708,6 +937,7 @@ function showRoundResult() {
   $("result-detail").textContent = resultDetail(lvl, r, r.playerQualified, last, w.qualify);
   $("result-pb").classList.toggle("hidden", !isNewBest(lvl, r.time, r.playerQualified));
   saveRound(cfg.level, r);
+  resultFanfare(r.playerQualified, last);
   $("btn-continue").textContent = r.playerQualified && !last ? "Next round (Space)" : "See results (Space)";
   $("btn-continue").classList.remove("hidden");
   $("btn-result-quit").classList.remove("hidden");
@@ -783,6 +1013,7 @@ async function finishShow() {
   app.profile = res.profile;
   const reached = app.show.results.length;
   const title = $("show-title");
+  if (!res.won) sfx.showOver();
   if (res.won) {
     title.textContent = "Crown won!";
     title.className = "good";
@@ -938,11 +1169,11 @@ function showRecords() {
 }
 
 function onKey(code, e) {
-  if (code === "KeyF") { $("fps").classList.toggle("hidden"); return; }
+  if (code === "KeyF") { settings.showFps = !settings.showFps; saveSettings(); return; }
   if (code === "Escape" && performance.now() - (app.lockLostAt || 0) < 400) return;
   if (code === "Escape" || code === "KeyP") {
     if (app.mode === "play" || app.mode === "tutorial") { e.preventDefault(); togglePause(); }
-    else if (["howto", "records", "first", "mp"].includes(app.screen)) showScreen("menu");
+    else if (["howto", "records", "first", "mp", "settings", "rounds"].includes(app.screen)) showScreen("menu");
     else if (code === "Escape" && !app.mp && ["intro", "result"].includes(app.screen)) quitShow();
     else if (code === "Escape" && app.screen === "lobby" && confirm("Leave this room?")) backToMenu();
     return;
@@ -981,11 +1212,105 @@ function quitShow() {
 }
 
 on("btn-play", startShowFlow);
-$("btn-graphics").querySelector("span").textContent = graphics === "3d" ? "Graphics: 3D" : "Graphics: Classic 2D";
-on("btn-graphics", () => {
-  localStorage.setItem(GRAPHICS_KEY, graphics === "3d" ? "2d" : "3d");
-  location.reload();
+on("btn-settings", openSettings);
+on("btn-rounds", openRounds);
+
+function openSettings() {
+  const seg = (box, options, value, onPick) => {
+    box.innerHTML = "";
+    for (const [v, label] of options) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.classList.toggle("active", v === value);
+      b.addEventListener("click", () => { b.blur(); onPick(v); });
+      box.append(b);
+    }
+  };
+  const draw = () => {
+    seg($("set-graphics"), [["3d", "3D"], ["2d", "Classic 2D"]], graphics, (v) => {
+      if (v === graphics) return;
+      localStorage.setItem(GRAPHICS_KEY, v);
+      location.reload();
+    });
+    $("set-quality-row").classList.toggle("hidden", graphics !== "3d");
+    seg($("set-quality"), [["auto", "Auto"], ["high", "Sharp"], ["low", "Fast"]], settings.quality, (v) => {
+      settings.quality = v; saveSettings(); draw();
+    });
+    $("set-volume").value = Math.round(settings.volume * 100);
+    $("set-volume-val").textContent = `${Math.round(settings.volume * 100)}%`;
+    $("set-music").value = Math.round(settings.music * 100);
+    $("set-music-val").textContent = `${Math.round(settings.music * 100)}%`;
+    $("set-sens").value = Math.round(settings.sensitivity * 100);
+    $("set-sens-val").textContent = `${Math.round(settings.sensitivity * 100)}%`;
+    $("set-invert").checked = settings.invertY;
+    $("set-fps").checked = settings.showFps;
+  };
+  draw();
+  showScreen("settings");
+}
+$("set-volume").addEventListener("input", (e) => {
+  settings.volume = e.target.value / 100;
+  $("set-volume-val").textContent = `${e.target.value}%`;
+  saveSettings();
 });
+$("set-volume").addEventListener("change", () => sfx.jump());
+$("set-music").addEventListener("input", (e) => {
+  settings.music = e.target.value / 100;
+  $("set-music-val").textContent = `${e.target.value}%`;
+  saveSettings();
+});
+$("set-sens").addEventListener("input", (e) => {
+  settings.sensitivity = e.target.value / 100;
+  $("set-sens-val").textContent = `${e.target.value}%`;
+  saveSettings();
+});
+$("set-invert").addEventListener("change", (e) => { settings.invertY = e.target.checked; saveSettings(); });
+$("set-fps").addEventListener("change", (e) => { settings.showFps = e.target.checked; saveSettings(); });
+
+/** A browsable list of every round in the game. */
+function openRounds() {
+  const list = $("rounds-list");
+  list.innerHTML = "";
+  const pool = app.data.pool;
+  const groups = [["Races", pool.race], ["Survival rounds", pool.survival], ["Finals", pool.final]];
+  for (const [title, ids] of groups) {
+    const h = document.createElement("h3");
+    h.textContent = `${title} (${ids.length})`;
+    list.append(h);
+    const grid = document.createElement("div");
+    grid.className = "rounds-grid";
+    for (const id of ids) {
+      const lvl = app.data.levels[id];
+      const card = document.createElement("div");
+      card.className = `round-card ${lvl.type === "race" ? "race" : pool.final.includes(id) ? "final" : "survival"}`;
+      const name = document.createElement("b");
+      name.textContent = lvl.name;
+      const desc = document.createElement("p");
+      desc.textContent = lvl.description;
+      card.append(name, desc);
+      const best = pbFor(id);
+      if (best != null) {
+        const pb = document.createElement("small");
+        pb.textContent = `Your best: ${best.toFixed(2)}s`;
+        card.append(pb);
+      }
+      if (lvl.sections) {
+        const strip = document.createElement("div");
+        strip.className = "course-strip mini";
+        fillCourse(strip, lvl);
+        card.append(strip);
+      }
+      grid.append(card);
+    }
+    list.append(grid);
+  }
+  showScreen("rounds");
+}
+
+// A soft click for every button.
+document.addEventListener("click", (e) => {
+  if (e.target instanceof Element && e.target.closest("button")) sfx.click();
+}, true);
 on("btn-tutorial", startTutorial);
 on("btn-howto", () => showScreen("howto"));
 on("btn-records", showRecords);
@@ -1070,7 +1395,7 @@ const mpUi = {
   renderer: () => renderer,
   startAttract: () => startAttract(true),
   intent: (step) => cameraRelative(input.step(step)),
-  armSpace, fillRecords, isNewBest,
+  armSpace, fillRecords, isNewBest, resultFanfare, sfx,
   showScreen, showError, showInfo, banner, playerIcon, enterPlay, fillIntro, resultDetail, pbFor, refreshMenu, drawPreview,
   onDisconnected() {
     showError("Lost the connection to the room.");

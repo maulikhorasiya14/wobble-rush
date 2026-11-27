@@ -82,7 +82,8 @@ export class Renderer {
     g.addColorStop(1, th.void[1]);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    for (const s of this.stars) {
+    if (th.snow) this._drawSnow(world);
+    else for (const s of this.stars) {
       const y = (((s.y - cam.y * 0.25) % (VIEW_H * 2)) + VIEW_H * 2) % (VIEW_H * 2) - VIEW_H / 2;
       ctx.globalAlpha = 0.35 + 0.35 * Math.sin(world.clock * 2 + s.tw);
       ctx.fillStyle = "#ffffff";
@@ -117,6 +118,8 @@ export class Renderer {
     for (const b of world.bumpers) items.push({ y: b.y, f: () => this._drawBumper(b) });
     for (const p of world.pendulums) items.push({ y: p.y, f: () => this._drawBall(p.bx, p.y, p.r, "#ff5fa2", p.x) });
     for (const r of world.rollers) items.push({ y: r.y, f: () => this._drawBall(r.x, r.y, r.r, "#f4fbff") });
+    for (const d of world.doors) if (!d.broken) items.push({ y: d.y + d.h, f: () => this._drawDoor(d) });
+    for (const lg of world.logs) items.push({ y: lg.y, f: () => this._drawLog(lg) });
     for (const b of world.bodies) {
       if (b.hidden || b.eliminated) continue;
       items.push({ y: b.y + (b.falling ? -1000 : 0), f: () => this._drawBody(b, world, b.id === followId) });
@@ -129,6 +132,25 @@ export class Renderer {
     // HUD-ish overlays in screen space
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (world.type === "race" && !world.tutorial) drawProgressBar(ctx, world, followId);
+  }
+
+  /** Snowflakes drifting down the screen, blown sideways by the gusts. */
+  _drawSnow(world) {
+    const ctx = this.ctx;
+    const gust = world.zones.find((z) => z.type === "gust" && z.active);
+    const wx = gust && Number.isFinite(gust.fx) ? gust.fx : 0;
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "rgba(110,150,205,0.45)";
+    ctx.lineWidth = 1;
+    for (const s of this.stars) {
+      const t = world.clock;
+      const x = ((s.x + t * (20 + wx * 0.9) + Math.sin(t + s.tw) * 12) % VIEW_W + VIEW_W) % VIEW_W;
+      const y = ((s.y + t * (45 + s.r * 20)) % VIEW_H + VIEW_H) % VIEW_H;
+      ctx.beginPath();
+      ctx.arc(x, y, s.r + 0.8, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+    }
   }
 
   _updateCamera(world, followId, dt) {
@@ -268,6 +290,58 @@ export class Renderer {
   /** Belts, ice, wind, bounce pads and moving platforms (flat things on the floor). */
   _drawExtras(world, th) {
     const ctx = this.ctx;
+    // Tilting platforms: shaded toward the low side, with an arrow showing the lean.
+    for (const t of world.tilts) {
+      if (!this._visible(t.x, t.y, t.w, t.h)) continue;
+      ctx.fillStyle = th.side;
+      roundRect(ctx, t.x, t.y + 10, t.w, t.h + 12, 12);
+      ctx.fill();
+      const g = ctx.createLinearGradient(t.x, 0, t.x + t.w, 0);
+      const dark = "rgba(42,27,94,0.35)", none = "rgba(42,27,94,0)";
+      g.addColorStop(0, t.angle < 0 ? dark : none);
+      g.addColorStop(1, t.angle > 0 ? dark : none);
+      ctx.fillStyle = th.floorA;
+      roundRect(ctx, t.x, t.y, t.w, t.h, 12);
+      ctx.fill();
+      ctx.fillStyle = g;
+      ctx.globalAlpha = Math.min(1, Math.abs(t.angle) * 1.5);
+      roundRect(ctx, t.x, t.y, t.w, t.h, 12);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#b47cff";
+      ctx.lineWidth = 4;
+      roundRect(ctx, t.x, t.y, t.w, t.h, 12);
+      ctx.stroke();
+      ctx.fillStyle = "#b47cff";
+      ctx.beginPath();
+      ctx.moveTo(t.x + t.w / 2, t.y + t.h - 6);
+      ctx.lineTo(t.x + t.w / 2 - 14, t.y + t.h + 10);
+      ctx.lineTo(t.x + t.w / 2 + 14, t.y + t.h + 10);
+      ctx.fill();
+    }
+    // Trust and crumble tiles: all look alike; cracking ones shake, gone ones vanish.
+    for (const g of world.ghosts) {
+      if (g.st === 2 || !this._visible(g.x, g.y, g.w, g.h)) continue;
+      const shake = g.st === 1 ? Math.sin(world.clock * 70) * 3 : 0;
+      ctx.fillStyle = th.side;
+      roundRect(ctx, g.x + shake, g.y + 8, g.w, g.h + 8, 10);
+      ctx.fill();
+      ctx.fillStyle = g.st === 1 ? "#ffd6a6" : g.kind === "crumble" ? "#f1e4c6" : "#e8f2ff";
+      roundRect(ctx, g.x + shake, g.y, g.w, g.h, 10);
+      ctx.fill();
+      ctx.strokeStyle = g.known ? "#3ddc97" : "rgba(42,27,94,0.25)";
+      ctx.lineWidth = g.known ? 5 : 2;
+      ctx.stroke();
+      if (g.st === 1) {
+        ctx.strokeStyle = "rgba(90,40,0,0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(g.x + g.w * 0.2 + shake, g.y + g.h * 0.3);
+        ctx.lineTo(g.x + g.w * 0.5 + shake, g.y + g.h * 0.55);
+        ctx.lineTo(g.x + g.w * 0.8 + shake, g.y + g.h * 0.4);
+        ctx.stroke();
+      }
+    }
     for (const d of world.discs) {
       ctx.fillStyle = th.side;
       ctx.beginPath();
@@ -359,6 +433,42 @@ export class Renderer {
       ctx.fill();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  /** A mystery door: purple with a "?"; a real one, once found, gets a red X. */
+  _drawDoor(d) {
+    const ctx = this.ctx, H = 34;
+    ctx.fillStyle = "#3a1d8f";
+    roundRect(ctx, d.x, d.y - H + d.h, d.w, H, 6);
+    ctx.fill();
+    ctx.fillStyle = d.known ? "#ff8fab" : "#b47cff";
+    roundRect(ctx, d.x, d.y - H, d.w, H + 4, 8);
+    ctx.fill();
+    ctx.font = "bold 22px 'Fredoka', 'Trebuchet MS', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = d.known ? "#a3163a" : "#ffffff";
+    ctx.fillText(d.known ? "\u2716" : "?", d.x + d.w / 2, d.y - H / 2 + 2);
+  }
+
+  /** A rolling log across the course. */
+  _drawLog(lg) {
+    const ctx = this.ctx;
+    const y = lg.y - lg.r;
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.fillRect(lg.x0, lg.y + lg.r * 0.6, lg.x1 - lg.x0, 8);
+    ctx.fillStyle = "#b5733f";
+    roundRect(ctx, lg.x0, y - lg.r, lg.x1 - lg.x0, lg.r * 2, lg.r);
+    ctx.fill();
+    ctx.strokeStyle = "#7a4a22";
+    ctx.lineWidth = 3;
+    const off = (lg.rot * lg.r) % 24;
+    for (let x = lg.x0 + 12 + off; x < lg.x1 - 6; x += 24) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - lg.r + 4);
+      ctx.lineTo(x - 6, y + lg.r - 4);
       ctx.stroke();
     }
   }
@@ -634,6 +744,11 @@ export function drawProgressBar(ctx, world, followId) {
   for (const cp of world.checkpoints) {
     ctx.fillStyle = "#3c9cff";
     ctx.fillRect(x - 9, toY(cp.y) - 1, 18, 2);
+  }
+  // Notches where each section of the course begins.
+  for (const sp of L.section_spans || []) {
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(x - 13, toY(sp.y1) - 1, 4, 2);
   }
   const bodies = world.bodies.slice().sort((a, b) => (a.id === followId) - (b.id === followId));
   for (const b of bodies) {

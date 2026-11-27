@@ -67,11 +67,23 @@ router.
 Set `WOBBLE_HOST=127.0.0.1` to keep the game on your own computer only, and
 `WOBBLE_PORT` to use a different port.
 
+If a player's connection drops mid-game (a Wi-Fi blip), their browser reconnects by
+itself and they carry on in the same round; the server holds their place for 20 s
+(8 s for the host). The server doesn't restart itself when files change, because that
+would drop everyone in a room; while editing the game, start it with
+`WOBBLE_RELOAD=1 python run.py` to get automatic restarts.
+
 ## Features
 
 - Pick a **3, 4 or 5-round** show; rounds are drawn at random from 15 rounds, each
   tagged with where it can appear (opener, middle, final)
-- 9 races: Spin Sprint, Conveyor Canyon, Bounce Bay, Frosty Slopes, Hammer Hall,
+- 9 long races (9,000–10,500 px, 9–13 sections each, from a library of 40 section
+  types in `game/courses.py`; every race has its own signature sections, none repeats
+  within a race, and the finish stays hidden in the distance until you get close).
+  Obstacles include mystery doors, hidden-path trust tiles, crumbling bridges, tilting
+  platforms, rolling logs, cannon alleys and shifting gates, with door and tile layouts
+  reshuffled every round (the same for everyone in multiplayer): Spin Sprint, Conveyor
+  Canyon, Bounce Bay, Frosty Slopes, Hammer Hall,
   Drift Lifts, Gusty Gorge, Turntable Trail, Piston Pass
 - 3 survival rounds: Tile Panic, Meteor Meadow, Blizzard Bluff
 - 3 finals: Spin Arena, Cannon Clash, Pinball Pit
@@ -87,6 +99,15 @@ Set `WOBBLE_HOST=127.0.0.1` to keep the game on your own computer only, and
 - Personal bests saved locally: best score, furthest round, crowns, best times per level
   (each round's best is saved as soon as the round ends)
 - Pick your name and colour
+- Original cartoon sound effects and music, all synthesized in the browser (no audio
+  files): footsteps, jumps, landings, dives, bonks, boings, and whooshes as spinners,
+  hammers, walls, pistons and logs pass close by; countdown, qualify, crown and
+  round-transition stingers; and four original music tracks (menu, race, survival,
+  final) built from sections with randomized phrases so they don't loop audibly.
+  Separate volume sliders for effects and music.
+- Settings: graphics mode and quality, sound volume, mouse sensitivity, invert Y, FPS counter
+- Round intro cards preview the course section by section; a **Rounds** gallery shows them all
+- Live race position, section labels and confetti when you qualify or win
 - 3D graphics: lit, shadowed candy courses, original animated characters (running,
   jumping, diving, landing squash, ragdoll tumbles when hit), particles and a smooth
   chase camera with fly-over round intros
@@ -109,6 +130,7 @@ wobble-rush/
 ├── game/
 │   ├── __init__.py          # Flask app factory
 │   ├── levels.py            # Levels, physics, show format, palette
+│   ├── courses.py           # The nine race courses, built from sections
 │   ├── rules.py             # Result validation, scoring, personal bests
 │   ├── storage.py           # JSON save file load/save/reset
 │   ├── routes.py            # Page + JSON API
@@ -127,6 +149,8 @@ wobble-rush/
 │           ├── render3d.js  # 3D renderer: scene, characters, animation, camera
 │           ├── render.js    # Classic 2D renderer (fallback) + progress bar
 │           ├── input.js     # Keyboard input
+│           ├── sfx.js       # Sound effects and mixing (Web Audio)
+│           ├── music.js     # Background music: original tunes on a small sequencer
 │           └── api.js       # Calls to the Python API
 │       └── vendor/          # three.js (MIT) and the Fredoka font (OFL), bundled for offline play
 └── tests/                   # pytest suite

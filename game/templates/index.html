@@ -17,6 +17,7 @@
     <div class="hud-chip hud-left">
       <span id="hud-round" class="hud-small"></span>
       <span id="hud-level" class="hud-big"></span>
+      <span id="hud-place" class="hud-place hidden"></span>
     </div>
     <div class="hud-counter">
       <div id="hud-status" class="counter-big"></div>
@@ -26,6 +27,7 @@
       <span id="hud-timer" class="hud-big">0.0</span>
       <span class="hud-small">Best <b id="hud-pb">--</b></span>
     </div>
+    <div id="hud-section" class="hud-section hidden"></div>
     <div id="hud-players" class="hud-players" title="Every player: raised = qualified, grey = knocked out, outlined = you"></div>
     <div id="feed" class="feed"></div>
     <div id="look-hint" class="hidden">Click the game to steer the camera with your mouse</div>
@@ -55,7 +57,8 @@
       <button id="btn-tutorial" class="btn side"><i>?</i>Tutorial</button>
       <button id="btn-howto" class="btn side"><i>i</i>How to play</button>
       <button id="btn-records" class="btn side"><i>&#9733;</i>Personal bests</button>
-      <button id="btn-graphics" class="btn side small"><i>&#9881;</i><span>Graphics: 3D</span></button>
+      <button id="btn-rounds" class="btn side"><i>&#9673;</i>Rounds</button>
+      <button id="btn-settings" class="btn side"><i>&#9881;</i>Settings</button>
     </div>
     <div class="menu-hero">
       <canvas id="preview" width="300" height="300"></canvas>
@@ -144,6 +147,32 @@
     </div>
   </section>
 
+  <!-- Settings -->
+  <section id="screen-settings" class="screen hidden">
+    <div class="card dialog settings">
+      <h2>Settings</h2>
+      <div class="set-row"><span>Graphics</span><div id="set-graphics" class="seg"></div></div>
+      <div class="set-row" id="set-quality-row"><span>Quality</span><div id="set-quality" class="seg"></div></div>
+      <label class="set-row"><span>Sound effects</span><input id="set-volume" type="range" min="0" max="100" step="5"><b id="set-volume-val"></b></label>
+      <label class="set-row"><span>Music</span><input id="set-music" type="range" min="0" max="100" step="5"><b id="set-music-val"></b></label>
+      <label class="set-row"><span>Mouse sensitivity</span><input id="set-sens" type="range" min="25" max="250" step="5"><b id="set-sens-val"></b></label>
+      <label class="set-row check"><span>Invert mouse up/down</span><input id="set-invert" type="checkbox"></label>
+      <label class="set-row check"><span>Show FPS counter</span><input id="set-fps" type="checkbox"></label>
+      <p class="muted">Changing the graphics mode reloads the game. Everything is saved on this computer.</p>
+      <div class="row"><button class="btn primary" data-back>Done</button></div>
+    </div>
+  </section>
+
+  <!-- Rounds gallery -->
+  <section id="screen-rounds" class="screen hidden">
+    <div class="card dialog wide rounds-gallery">
+      <h2>The rounds</h2>
+      <p class="muted">Every show picks a random mix: a race to open, then races and survival rounds, and one of the finals.</p>
+      <div id="rounds-list" class="rounds-list"></div>
+      <div class="row"><button class="btn primary" data-back>Back</button></div>
+    </div>
+  </section>
+
   <!-- Multiplayer: create or join a room -->
   <section id="screen-mp" class="screen hidden">
     <div class="card dialog wide mp-card">
@@ -202,6 +231,7 @@
       <h2 id="intro-name" class="mega"></h2>
       <p id="intro-desc" class="intro-desc"></p>
       <p id="intro-goal" class="goal"></p>
+      <div id="intro-course" class="course-strip"></div>
       <div id="intro-players" class="players-row"></div>
       <p id="intro-pb" class="intro-pb"></p>
       <div class="row">
@@ -271,6 +301,7 @@
     </div>
   </section>
 
+  <div id="celebrate" aria-hidden="true"></div>
   <div id="wipe"></div>
   <div id="error" class="hidden"></div>
 </div>

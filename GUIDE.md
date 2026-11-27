@@ -133,38 +133,62 @@ Good to know:
 
 ## 4. The rounds
 
-### Spin Sprint (race)
+### Races: how they work
 
-Run from the bottom of the course to the **FINISH** arch at the top.
-The bar on the right edge of the screen shows everyone's progress (your dot is the
-big one with a white ring).
+Run from the start to the **FINISH** arch, far off in the distance: every race is a
+long course (around 9,000–10,500 px, two to three minutes for the field) made of
+**10–14 sections** in a row, so you can't see the finish from the start. As you reach
+each part, a label under the counter tells you where you are, e.g.
+"Section 7 of 14 · Zig-zag platforms". The bar on the right edge shows everyone's
+progress (your dot has a white ring and the label YOU); the small notches on its left
+mark where each section begins.
 
-Sections, in order:
+**Checkpoints** are the blue dashed lines with flags, one at (almost) every section.
+If you fall off, you drop back in at the last checkpoint you crossed, so a fall only
+costs you that section. Once you qualify, the game fast-forwards until the other spots
+are filled.
 
-1. **Spinner field**: three spinning bars. Jump over a bar just before it reaches
-   you, or slip through the lane between the two front spinners.
-2. **Gaps**: three jumps over empty space. Run at full speed and jump at the edge.
-3. **Sliding walls**: blue walls sweep left and right. They're too tall to jump, so
-   wait for an opening. Getting caught pushes you around.
-4. **Bumper field**: pink bumpers bounce you away hard. Weave between them.
-5. **Wobbly bridge**: a narrow bridge with two fast spinners. Stay in the middle and
-   time your jumps. This is where most falls happen.
-6. **Final stretch**: one giant spinner guards the finish.
+Before each race, the intro card shows the whole course as a strip of sections. Every
+race has its own signature sections and no section repeats within a race. Browse them
+all on the main menu under **Rounds**.
 
-**Checkpoints** are the blue dashed lines with flags. If you fall off, you drop back in
-at the last checkpoint you crossed.
+Sections you'll meet:
 
-Once you qualify, the game fast-forwards until the other spots are filled.
+| Section | What to do |
+|---|---|
+| Spinner field | Jump a spinning bar just before it reaches you, or slip between them. |
+| Island hops | Running jumps across gaps; some islands are narrow. |
+| Sliding walls | Walls sweep side to side; too tall to jump, so wait for an opening. |
+| Bumper maze | Pink bumpers bounce you away hard; weave between them. |
+| Spinner bridge | A narrow bridge with two fast spinners. Stay central and time your jumps. |
+| Zig-zag platforms | Platforms step left and right; jump where they overlap. |
+| Stepping stones | Rows of small stones; hop straight up the line where they overlap. |
+| Split path | Choose: a narrow shortcut plank swept by hammers on the left (quick if you time it), or a safer road with sliding blocks and bumpers on the right. |
+| Bounce pads / Bounce chain | Gaps too wide to jump: step on a glowing pad and fly across, sometimes pad after pad. |
+| Conveyor lanes / Cross belts / Express bridge | Belts carry you forward, back or sideways. |
+| Belt bridges | Three narrow belt bridges: fast but blocked, backward (a trap), or slow and safe. |
+| Snowball slope | Slippery ice with snowballs rolling down at you. |
+| Hammer walk / Giant hammers | Swinging hammers over a walkway or a wide hall. |
+| Drifting lifts | Moving platforms over the sea: wait until the next one lines up, then jump. |
+| Wind path / Windy islands | Gusts switch on and off; lean into them or wait. |
+| Turntables | Spinning discs carry you round; aim ahead of where you want to go. |
+| Piston corridor / Pop-up blocks / Piston plaza | Pistons punch from the walls and blocks rise from the floor; read the rhythm. |
+| Mystery doors | Rows of "?" doors: fakes burst open when you run into them, real ones stop you. A door someone has bumped shows a red X. The layout changes every round. |
+| Trust tiles | Only one hidden path of tiles holds you; fakes crack and drop. Safe tiles glow green once someone has stood on them, so watch where others go! |
+| Crumble bridge | Every tile drops a moment after you step on it (and grows back later): keep moving. |
+| Tilting platforms | They rock toward wherever players stand and slide you downhill. Stay near the middle. |
+| Log hurdles | Logs roll down the course at you: jump each one as it arrives. |
+| Cannon alley | Cannons on both sides fire balls across a narrow path. |
+| Shifting gates | Walls with one gap that slides side to side: run through when it lines up. |
+| Spinner forest / Giant sweeper | A grid of small spinners, or one huge bar sweeping the whole width. |
+| Hammer hops / Belt islands / Twister discs | Island hops with a hammer, a sideways belt, or a spinner riding a turntable. |
 
-You have time to recover from mistakes: a clean run takes about 20 seconds, while the
-8 spots usually take 45–70 seconds to fill. Falling only sends you back to the last
-checkpoint, so keep going.
+### The nine races
 
-### More races
+Each race has its own theme and signature sections:
 
-Every race works the same way (reach the finish before the spots fill up, checkpoints
-save your progress), but each adds its own obstacle:
-
+- **Spin Sprint**: the classic mix: spinners, islands, sliding walls, bumpers, a
+  spinner bridge, zig-zags, stepping stones and a split path.
 - **Conveyor Canyon**: conveyor belts. Pick the lane whose arrows point toward the
   finish, push against the sideways belts, then ride the express belt along the bridge.
 - **Bounce Bay**: gaps far too wide to jump. Run onto a glowing **bounce pad** and it

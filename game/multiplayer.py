@@ -39,6 +39,8 @@ RESULT_SECONDS = 6     # result card between rounds
 STATE_EVENTS = {"jump", "dive", "land", "hit", "pad", "fall", "respawn", "bump"}
 ROUND_TIMEOUT = rules.MAX_TIME + 60  # give up on a round the host never finishes
 IDLE_TIMEOUT = 120     # browsers send a heartbeat every few seconds; silent ones are dropped
+RESUME_GRACE = 20      # a dropped connection keeps its place this long, so a Wi-Fi blip can rejoin
+HOST_RESUME_GRACE = 8  # ...shorter for the host: the round waits on them
                        # (generous: background tabs may only get to send one a minute)
 
 
@@ -67,6 +69,7 @@ class Conn:
         self.secret = secrets.token_hex(16)  # lets this player's game worker attach
         self.sim: Conn | None = None         # host only: its game worker's connection
         self.owner: Conn | None = None       # set on a game worker's connection
+        self.dropped_at: float | None = None # connection lost; may still resume
         self._q: deque[list] = deque()  # [text, droppable, key]
         self._cv = threading.Condition()
         # This thread is the only one that writes to the socket: the socket
@@ -147,7 +150,7 @@ class Room:
 
     def broadcast(self, msg, skip: Conn | None = None, droppable: bool = False) -> None:
         text = msg if isinstance(msg, str) else json.dumps(msg, separators=(",", ":"))
-        for p in self.players:
+        for p in tuple(self.players):  # a copy: players may join/leave on another thread
             if p is not skip:
                 p.send(text, droppable)
 
@@ -165,6 +168,13 @@ class Lobby:
     # ------------------------------------------------------------ messages
 
     def handle(self, conn: Conn, text: str) -> None:
+        conn.last_seen = time.monotonic()
+        # Hot path, many times a second: snapshots are passed on untouched and
+        # without the lobby lock (they only read who is in the room).
+        if text.startswith(('{"t":"snap"', '{"t": "snap"')):
+            owner = conn.owner
+            self._snap(owner or conn, text, from_worker=owner is not None)
+            return
         try:
             msg = json.loads(text)
         except ValueError:
@@ -172,21 +182,23 @@ class Lobby:
         if not isinstance(msg, dict):
             return
         kind = msg.get("t")
-        conn.last_seen = time.monotonic()
+        if kind == "state":          # also hot: 20 a second from every player
+            if conn.owner is None:
+                self._state(conn, msg)
+            return
+        if kind == "ping":
+            conn.send({"t": "pong", "at": msg.get("at")})
+            return
         with self.lock:
             if conn.owner is not None:
                 # The host's game worker: it sends the round, nothing else.
-                if kind == "snap":
-                    self._snap(conn.owner, text, from_worker=True)
-                elif kind == "round_end":
+                if kind == "round_end":
                     self._round_end(conn.owner, msg)
                 return
-            if kind == "snap":
-                self._snap(conn, text)
-            elif kind == "attach":
+            if kind == "attach":
                 self._attach(conn, msg)
-            elif kind == "state":
-                self._state(conn, msg)
+            elif kind == "resume":
+                self._resume(conn, msg)
             elif kind == "create":
                 self._create(conn, msg)
             elif kind == "join":
@@ -199,8 +211,40 @@ class Lobby:
                 self._round_end(conn, msg)
             elif kind == "leave":
                 self.disconnect(conn)
-            elif kind == "ping":
-                conn.send({"t": "pong", "at": msg.get("at")})
+
+    def _resume(self, conn: Conn, msg: dict) -> None:
+        """A player whose connection dropped is back: give them their place again."""
+        old = self.players.get(msg.get("id")) if isinstance(msg.get("id"), str) else None
+        if conn.room or not old or not old.room or not secrets.compare_digest(str(msg.get("secret")), old.secret):
+            return conn.send({"t": "error", "message": "That game has ended, so you can't rejoin it."})
+        room = old.room
+        conn.id, conn.name, conn.color, conn.secret = old.id, old.name, old.color, old.secret
+        conn.save_path = old.save_path
+        conn.room, conn.sim = room, old.sim
+        if conn.sim is not None:
+            conn.sim.owner = conn
+        room.players[room.players.index(old)] = conn
+        if room.host is old:
+            room.host = conn
+        self.players[conn.id] = conn
+        old.room, old.sim = None, None
+        old.close()
+        conn.send({"t": "joined", "you": conn.id, "code": room.code, "color": conn.color, "secret": conn.secret,
+                   "intro": INTRO_SECONDS, "result": RESULT_SECONDS, "resumed": True})
+        conn.send(room.state())
+        if room.phase == "round" and room.round_msg:
+            conn.send(room.round_msg)
+
+    def drop(self, conn: Conn) -> None:
+        """The connection went away without saying goodbye: hold their place for a while."""
+        with self.lock:
+            if conn.owner is not None or not conn.room:
+                return self.disconnect(conn)
+            if self.players.get(conn.id) is not conn:
+                return  # already replaced by a resumed connection
+            if conn.dropped_at is None:
+                conn.dropped_at = time.monotonic()
+                conn.close()
 
     def _attach(self, conn: Conn, msg: dict) -> None:
         owner = self.players.get(msg.get("id")) if isinstance(msg.get("id"), str) else None
@@ -340,6 +384,8 @@ class Lobby:
             "t": "round", "index": room.index, "total": len(room.plan), "level": cfg["level"],
             "qualify": qualify, "final": room.index == len(room.plan) - 1,
             "roster": room.roster, "host": room.host.id, "intro": INTRO_SECONDS,
+            # Same random door/tile layout for everyone in the round.
+            "seed": self.rng.randrange(2 ** 31),
         }
         room.broadcast(room.round_msg)
         self._later(room, INTRO_SECONDS + ROUND_TIMEOUT, self._round_timeout)
@@ -532,14 +578,20 @@ class Lobby:
         room.pending = None
 
     def reap(self, now: float | None = None) -> list[Conn]:
-        """Drop players whose browser has gone silent (lost Wi-Fi, laptop closed)."""
+        """Remove players whose connection dropped and didn't come back in time,
+        and players whose browser has gone silent (lost Wi-Fi, laptop closed)."""
         now = time.monotonic() if now is None else now
+        gone = []
         with self.lock:
-            idle = [p for room in list(self.rooms.values()) for p in room.players
-                    if now - getattr(p, "last_seen", now) > IDLE_TIMEOUT]
-            for p in idle:
+            for room in list(self.rooms.values()):
+                for p in list(room.players):
+                    dropped = getattr(p, "dropped_at", None)
+                    grace = HOST_RESUME_GRACE if room.host is p else RESUME_GRACE
+                    if (dropped is not None and now - dropped > grace) or now - getattr(p, "last_seen", now) > IDLE_TIMEOUT:
+                        gone.append(p)
+            for p in gone:
                 self.disconnect(p)
-        return idle
+        return gone
 
     def advance(self, code: str) -> None:
         """Tests: run the room's pending timer now."""
@@ -567,7 +619,7 @@ def init_multiplayer(app) -> Lobby:
 
     def reaper():
         while True:
-            time.sleep(5)
+            time.sleep(1)
             for conn in lobby.reap():
                 conn.close(wait=True)
                 ws = sockets.get(conn)
@@ -595,7 +647,7 @@ def init_multiplayer(app) -> Lobby:
             pass
         finally:
             sockets.pop(conn, None)
-            lobby.disconnect(conn)
+            lobby.drop(conn)       # keeps their place for a moment in case they reconnect
             conn.close(wait=True)  # stop writing before flask-sock closes the socket
 
     return lobby

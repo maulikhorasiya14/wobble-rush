@@ -5,7 +5,7 @@ def test_index_page(client):
 
 
 def test_static_scripts_served(client):
-    for name in ("main", "world", "bots", "render", "render3d", "input", "api", "mp", "netsync", "hostworker"):
+    for name in ("main", "world", "bots", "render", "render3d", "input", "api", "mp", "netsync", "hostworker", "sfx", "music"):
         assert client.get(f"/static/js/{name}.js").status_code == 200
 
 

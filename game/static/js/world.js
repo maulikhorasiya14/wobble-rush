@@ -47,7 +47,10 @@ export class World {
     this.bumpers = (level.bumpers || []).map((b) => ({ ...b, pulse: 0 }));
     // Newer obstacle types (see levels.py): belts/ice/wind zones, bounce pads,
     // swinging hammers, rolling balls and moving platforms.
-    this.zones = (level.zones || []).map((z) => ({ ...z, active: z.type !== "wind" }));
+    this.zones = (level.zones || []).map((z) => ({
+      ...z, active: z.type !== "wind" && z.type !== "gust",
+      ...(z.type === "gust" ? { fx: 0, fy: 0, angle: 0 } : {}),  // calm until the round starts
+    }));
     this.pads = (level.pads || []).map((p) => ({ ...p, pulse: 0 }));
     this.pendulums = (level.pendulums || []).map((p) => {
       const bx = p.x + p.amp * Math.sin(p.phase || 0);
@@ -64,10 +67,21 @@ export class World {
     this.pistons = (level.pistons || []).map((p) => ({ ...p, cx: p.x0, pcx: p.x0, vx: 0, out: 0 }));
     this.popups = (level.popups || []).map((p) => ({ ...p, rise: 0, up: false }));
     this.cannons = (level.cannons || []).map((c) => {
+      // Race cannons ("lane" cannons) sit at the course edge and fire straight across.
+      if (c.lane) return { ...c, t: c.phase || 0, flash: 0 };
       const A = level.arena;
       const x = A.x + Math.cos((c.angle * Math.PI) / 180) * c.dist, y = A.y + Math.sin((c.angle * Math.PI) / 180) * c.dist;
       return { ...c, x, y, t: c.phase, aim: Math.atan2(A.y - y, A.x - x), flash: 0 };
     });
+    // Each round shuffles which doors are real and where the hidden tile path runs.
+    // Everyone in a multiplayer round gets the same seed, so the same layout.
+    const rng = seeded(opts.seed ?? Math.floor(Math.random() * 2 ** 31));
+    this.doors = buildDoors(level.doors || [], rng);
+    this.ghosts = buildGhosts(level.ghosts || [], rng);
+    this.tilts = (level.tilts || []).map((t) => ({ ...t, angle: 0, vel: 0 }));
+    this.logCfg = level.logs || [];
+    this.logT = this.logCfg.map((c, i) => c.phase ?? i * 0.7);
+    this.logs = []; // rolling logs: {id, y, x0, x1, r, speed, rot}
     this.meteors = []; // incoming strikes on Meteor Meadow: {x, y, r, t, T}
     this.meteorT = level.tiles?.meteors?.start ?? 0;
     this.checkpoints = (level.checkpoints || []).slice().sort((a, b) => b.y - a.y);
@@ -152,7 +166,23 @@ export class World {
       const t = this.tileAt(x, y);
       if (t && t.state !== "gone") return true;
     }
+    for (const g of this.ghosts) {
+      if (g.st !== 2 && x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) return true;
+    }
+    for (const t of this.tilts) {
+      if (x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return true;
+    }
     return false;
+  }
+
+  ghostAt(x, y) {
+    for (const g of this.ghosts) if (x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) return g;
+    return null;
+  }
+
+  tiltAt(x, y) {
+    for (const t of this.tilts) if (x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
+    return null;
   }
 
   /** The moving platform under (x, y), `ahead` seconds from now. */
@@ -172,6 +202,8 @@ export class World {
   /** Floor that will still be there `ahead` seconds from now (crumbling tiles may not be). */
   safeAt(x, y, ahead = 0) {
     if (!this.onFloor(x, y, ahead)) return false;
+    const g = this.ghosts.length ? this.ghostAt(x, y) : null;
+    if (g && g.st === 1 && g.t <= ahead + 0.15) return false;
     if (!this.tiles || (this.level.floors || []).length) return true;
     const t = this.tileAt(x, y);
     return !!t && (t.state === "solid" || t.t > ahead + 0.15);
@@ -227,6 +259,10 @@ export class World {
     }
     for (const p of this.popups) {
       if (this._popupUp(p, this.time + ahead) && x > p.x - R && x < p.x + p.w + R && y > p.y - R && y < p.y + p.h + R) return true;
+    }
+    // Doors everyone has seen are real (marked with an X). Untried doors might be fakes.
+    for (const d of this.doors) {
+      if (!d.broken && d.known && x > d.x - R && x < d.x + d.w + R && y > d.y - R && y < d.y + d.h + R) return true;
     }
     return false;
   }
@@ -288,6 +324,11 @@ export class World {
     this._collideBodies();
     for (const b of this.bodies) if (!this.external.has(b.id)) this._floorCheck(b, dt);
     if (this.tiles) this._updateTiles(dt);
+    if (this.ghosts.length) this._updateGhosts(dt);
+    // People moved by other browsers still break doors and get spotted on real ones.
+    if (this.external.size && this.doors.length) {
+      for (const b of this._active()) if (this.external.has(b.id)) this._touchDoors(b, false);
+    }
     if (this.status === "running") this._rules();
   }
 
@@ -349,10 +390,20 @@ export class World {
     }
     this.rollers = this.rollers.filter((r) => r.life > 0);
     // Cannons fire across the arena, faster as the round goes on.
+    this._updateTilts(dt);
+    this._updateLogs(dt);
     for (const c of this.cannons) {
       c.flash = Math.max(0, c.flash - dt * 3);
       c.t -= dt;
-      if (c.t <= 0) {
+      if (c.t <= 0 && c.lane) {
+        // Race cannon: a ball straight across the course.
+        c.t = c.every * (0.85 + Math.random() * 0.3);
+        const ux = Math.cos(c.aim), uy = Math.sin(c.aim);
+        this.rollers.push({ x: c.x + ux * 40, y: c.y + uy * 40, px: c.x, py: c.y, vx: ux * c.speed, vy: uy * c.speed,
+          r: c.r, rot: 0, life: c.range / c.speed, push: c.push ?? 1, id: ++this.rollerId });
+        c.flash = 1;
+        this.events.push({ type: "cannon", x: c.x, y: c.y });
+      } else if (c.t <= 0) {
         c.t = c.every * Math.max(0.4, 1 - (this.level.cannon_ramp || 0) * this.time) * (0.8 + Math.random() * 0.4);
         const A = this.level.arena;
         const tx = A.x + (Math.random() - 0.5) * 2 * c.spread, ty = A.y + (Math.random() - 0.5) * 2 * c.spread;
@@ -406,6 +457,10 @@ export class World {
   /** Belts and wind push you along; ice makes you slide. */
   _applyZones(b, dt) {
     b.onIce = false;
+    if (this.tilts.length && !b.falling && b.z <= 0) {
+      const t = this.tiltAt(b.x, b.y);
+      if (t) b.x += t.angle * (t.slide ?? 170) * dt; // slide downhill
+    }
     if (!this.zones.length || b.falling) return;
     for (const z of this.zones) {
       if (b.x < z.x || b.x > z.x + z.w || b.y < z.y || b.y > z.y + z.h) continue;
@@ -610,6 +665,8 @@ export class World {
 
   _collideOne(b) {
     const P = this.P, R = this.R;
+    if (this.doors.length) this._touchDoors(b, true);
+    for (const lg of this.logs) this._hitLog(b, lg);
     {
       for (const s of this.spinners) this._hitSpinner(b, s, P, R);
       for (const w of this.sliders) this._hitSlider(b, w, R);
@@ -757,6 +814,111 @@ export class World {
         if (b.diving && !a.diving) { a.stun = Math.max(a.stun, 0.3); a.hitT = 0.2; }
       }
     }
+  }
+
+  // ---------------------------------------------------------------- new obstacles
+
+  /**
+   * Mystery doors: a fake door bursts open when you run into it; a real one
+   * stops you, and gets an X so everyone knows. `push`: also shove the body
+   * back out of a real door (false for characters moved by another browser).
+   */
+  _touchDoors(b, push) {
+    const R = this.R;
+    for (const d of this.doors) {
+      if (d.broken) continue;
+      const qx = clamp(b.x, d.x, d.x + d.w), qy = clamp(b.y, d.y, d.y + d.h);
+      const dx = b.x - qx, dy = b.y - qy;
+      if (dx * dx + dy * dy >= R * R || b.z > 60) continue;
+      if (!d.real) {
+        d.broken = true;
+        this.events.push({ type: "door", x: d.x + d.w / 2, y: d.y + d.h / 2, id: b.id });
+        continue;
+      }
+      if (!d.known) {
+        d.known = true;
+        this.events.push({ type: "bonk", x: qx, y: qy, id: b.id });
+      }
+      if (push) this._hitSlider(b, { cx: d.x + d.w / 2, y: d.y + d.h / 2, w: d.w, h: d.h, vx: 0 }, R);
+    }
+  }
+
+  /** Trust tiles: fakes crack under you and drop; crumble tiles drop and grow back. */
+  _updateGhosts(dt) {
+    const running = this.status === "running";
+    for (const g of this.ghosts) {
+      if (g.st === 0 && running) {
+        for (const b of this._active()) {
+          if (b.z > 0 || b.x < g.x || b.x > g.x + g.w || b.y < g.y || b.y > g.y + g.h) continue;
+          if (g.real) { g.known = true; break; }
+          g.st = 1;
+          g.t = g.crack ?? 0.35;
+          this.events.push({ type: "crack", x: g.x + g.w / 2, y: g.y + g.h / 2 });
+          break;
+        }
+      } else if (g.st === 1) {
+        g.t -= dt;
+        if (g.t <= 0) {
+          g.st = 2;
+          g.t = g.regrow ?? 0;
+          this.events.push({ type: "tile", x: g.x + g.w / 2, y: g.y + g.h / 2 });
+        }
+      } else if (g.st === 2 && g.regrow) {
+        g.t -= dt;
+        if (g.t <= 0) g.st = 0;
+      }
+    }
+  }
+
+  /** Tilting platforms lean toward wherever players stand, and spring back level. */
+  _updateTilts(dt) {
+    for (const t of this.tilts) {
+      let torque = 0;
+      for (const b of this._active()) {
+        if (b.z <= 0 && b.x >= t.x && b.x <= t.x + t.w && b.y >= t.y && b.y <= t.y + t.h) {
+          torque += (b.x - (t.x + t.w / 2)) / (t.w / 2);
+        }
+      }
+      const drift = t.drift ? Math.sin(this.time * t.drift + (t.phase || 0)) * 0.9 : 0;
+      t.vel += ((torque + drift) * 1.6 - t.angle * 2.4 - t.vel * 2.2) * dt;
+      t.angle = clamp(t.angle + t.vel * dt, -1, 1);
+      if (Math.abs(t.angle) === 1) t.vel = 0;
+    }
+  }
+
+  /** Logs roll down the course toward the start: jump them! */
+  _updateLogs(dt) {
+    this.logCfg.forEach((c, i) => {
+      this.logT[i] -= dt;
+      if (this.logT[i] <= 0) {
+        this.logT[i] = c.every * (0.8 + Math.random() * 0.4);
+        this.logs.push({ id: ++this.rollerId, y: c.y0, py: c.y0, x0: c.x0, x1: c.x1, r: c.r ?? 18,
+          speed: c.speed, rot: 0, end: c.y1 });
+      }
+    });
+    for (const lg of this.logs) {
+      lg.py = lg.y;
+      lg.y += lg.speed * dt;
+      lg.rot += (lg.speed * dt) / lg.r;
+    }
+    this.logs = this.logs.filter((lg) => lg.y < lg.end);
+  }
+
+  _hitLog(b, lg) {
+    const R = this.R;
+    if (b.x < lg.x0 - R || b.x > lg.x1 + R) return;
+    const dy = b.y - lg.y;
+    if (Math.abs(dy) >= lg.r + R || b.z >= lg.r * 1.6) return; // jumped clear over it
+    b.y = lg.y + lg.r + R;
+    b.vy = lg.speed * 1.5 + 140;
+    b.vx *= 0.3;
+    b.vz = 150;
+    b.z = Math.max(b.z, 0.01);
+    b.diving = false;
+    b.ballistic = false;
+    b.stun = 0.45;
+    b.hitT = 0.3;
+    this.events.push({ type: "hit", id: b.id, x: b.x, y: b.y, dx: 0, dy: 1 });
   }
 
   // ---------------------------------------------------------------- multiplayer
@@ -1014,4 +1176,57 @@ function shuffle(arr) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/** Small seeded random generator (so every browser builds the same layout from a seed). */
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Rows of doors: in each row a few (``reals``) are solid, the rest burst open. */
+function buildDoors(rows, rng) {
+  const out = [];
+  for (const row of rows) {
+    const idx = Array.from({ length: row.count }, (_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    const real = new Set(idx.slice(0, row.reals));
+    const w = row.w / row.count;
+    for (let i = 0; i < row.count; i++) {
+      out.push({ x: row.x + i * w + 3, y: row.y, w: w - 6, h: row.h, real: real.has(i), broken: false, known: false });
+    }
+  }
+  return out;
+}
+
+/**
+ * Tile grids. "trust": one hidden path of real tiles from the first row to the
+ * last (each step moves at most one column); every other tile is a fake.
+ * "crumble": every tile drops a moment after you step on it, then grows back.
+ */
+function buildGhosts(grids, rng) {
+  const out = [];
+  for (const g of grids) {
+    const cw = g.w / g.cols, rh = g.h / g.rows;
+    let col = Math.floor(rng() * g.cols);
+    for (let r = 0; r < g.rows; r++) {   // r = 0 is the row nearest the start
+      if (r > 0) col = clamp(col + Math.floor(rng() * 3) - 1, 0, g.cols - 1);
+      for (let c = 0; c < g.cols; c++) {
+        const real = g.kind === "trust" && c === col;
+        out.push({ x: g.x + c * cw + g.gap / 2, y: g.y + g.h - (r + 1) * rh + g.gap / 2, w: cw - g.gap, h: rh - g.gap,
+          real, crack: g.kind === "crumble" ? (g.crack ?? 0.7) : 0.35, regrow: g.kind === "crumble" ? (g.regrow ?? 3.5) : 0,
+          st: 0, t: 0, known: false, kind: g.kind });
+      }
+    }
+  }
+  return out;
 }

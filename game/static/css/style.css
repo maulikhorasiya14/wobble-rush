@@ -601,3 +601,78 @@ kbd {
   position: fixed; left: 0; right: 0; top: 0; z-index: 100; padding: 0.6em 1em;
   background: var(--yellow); color: var(--ink); font: 600 14px var(--font); text-align: center;
 }
+
+/* Section label: pops in as you reach each part of a race, then settles. */
+.hud-section {
+  position: absolute; top: 15.5%; left: 50%; transform: translateX(-50%);
+  padding: 0.2em 0.9em; border-radius: 999px; background: rgba(42,27,94,0.78); color: #fff;
+  font-weight: 600; font-size: 0.8em; white-space: nowrap; animation: section-in 2.6s ease forwards;
+}
+@keyframes section-in {
+  0% { opacity: 0; transform: translateX(-50%) scale(1.5); }
+  10% { opacity: 1; transform: translateX(-50%) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0.55; }
+}
+
+/* ---------- live race position ---------- */
+.hud-place {
+  margin-top: 0.25em; align-self: flex-start; padding: 0.05em 0.6em; border-radius: 999px;
+  background: rgba(255,255,255,0.15); font-weight: 700; font-size: 0.95em;
+}
+.hud-place.safe { background: var(--mint); color: var(--ink); }
+.hud-place.up { animation: place-up 0.5s cubic-bezier(.2,1.8,.4,1); }
+@keyframes place-up { from { transform: scale(1.4); } }
+
+/* ---------- course strip (round intro + rounds gallery) ---------- */
+.course-strip {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 0.3em 0.15em;
+  max-width: 46em; margin: 0.3em auto 0.1em;
+}
+.course-strip .chip {
+  display: inline-flex; align-items: center; gap: 0.3em; padding: 0.2em 0.6em 0.2em 0.35em; border-radius: 999px;
+  background: rgba(255,255,255,0.92); color: var(--ink); font-weight: 600; font-size: 0.78em;
+  box-shadow: 0 0.15em 0 rgba(42,27,94,0.25); animation: slide-up 0.4s cubic-bezier(.2,1.4,.4,1) both;
+}
+.course-strip .chip i { font-style: normal; font-size: 1.15em; }
+.course-strip .arrow { color: #fff; font-weight: 700; opacity: 0.85; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+.course-strip.mini { justify-content: flex-start; margin: 0.4em 0 0; }
+.course-strip.mini .chip { font-size: 0.66em; background: #f4eeff; box-shadow: none; animation: none; }
+.course-strip.mini .arrow { color: #b6a8de; text-shadow: none; }
+
+/* ---------- settings ---------- */
+.settings { text-align: left; min-width: 26em; }
+.set-row { display: flex; align-items: center; gap: 0.8em; padding: 0.55em 0; border-bottom: 1px dashed #e2d8fb; font-weight: 600; }
+.set-row > span { flex: 1; }
+.set-row input[type=range] { width: 11em; accent-color: var(--violet); }
+.set-row b { width: 3.2em; text-align: right; color: var(--violet); }
+.set-row.check input { width: 1.3em; height: 1.3em; accent-color: var(--violet); }
+
+/* ---------- rounds gallery ---------- */
+.rounds-gallery { max-width: 58em; }
+.rounds-gallery h3 { margin-top: 0.6em; }
+.rounds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr)); gap: 0.6em; }
+.round-card {
+  background: #fff; border: 1px solid #e6dcff; border-radius: 0.9em; padding: 0.7em 0.9em;
+  border-top: 0.35em solid var(--pink); box-shadow: 0 0.2em 0.5em rgba(42,27,94,0.08);
+}
+.round-card.survival { border-top-color: var(--mint); }
+.round-card.final { border-top-color: var(--yellow); }
+.round-card b { font-size: 1.05em; }
+.round-card p { margin: 0.3em 0 0; font-size: 0.82em; color: #5d5280; line-height: 1.35; }
+.round-card small { display: block; margin-top: 0.3em; color: var(--pink-dark); font-weight: 600; }
+
+/* ---------- celebration confetti ---------- */
+#celebrate { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
+#celebrate i {
+  position: absolute; top: -4%; width: 0.7em; height: 1.1em; border-radius: 0.15em;
+  animation: confetti-fall linear both;
+}
+@keyframes confetti-fall {
+  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  100% { transform: translate(var(--drift), 115vh) rotate(var(--spin)); opacity: 0.9; }
+}
+
+/* ---------- a touch more life on the menu ---------- */
+.btn.side:hover i { transform: rotate(-12deg) scale(1.12); }
+.btn.side i { transition: transform 0.15s; }

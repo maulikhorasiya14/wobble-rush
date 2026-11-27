@@ -18,7 +18,7 @@ self.onmessage = ({ data: m }) => {
     connect();
     clearInterval(timer);
     world = new World(m.level, m.physics, m.roster, {
-      qualify: m.qualify, countdown: m.countdown, multiplayer: true,
+      qualify: m.qualify, countdown: m.countdown, multiplayer: true, seed: m.seed,
       external: m.roster.filter((r) => r.isHuman).map((r) => r.id),
     });
     index = m.index;

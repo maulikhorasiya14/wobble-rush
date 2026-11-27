@@ -20,7 +20,9 @@ export class Input {
     this.intent = { mx: 0, my: 0, jump: false, dive: false, usedJump: false, usedDive: false };
 
     window.addEventListener("keydown", (e) => {
-      if (e.target instanceof HTMLInputElement) return;
+      // Typing in a text box (your name, a room code) shouldn't move you; sliders
+      // and tick boxes in Settings still let Esc close the screen.
+      if (e.target instanceof HTMLInputElement && !["range", "checkbox"].includes(e.target.type)) return;
       if (this.onKey) this.onKey(e.code, e);
       if (!this.enabled) return;
       if (MOVE[e.code] || JUMP.has(e.code) || DIVE.has(e.code)) e.preventDefault();
